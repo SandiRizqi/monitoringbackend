@@ -1,1 +1,6 @@
 dotenv
+Django
+whitenoise
+psycopg2-binary
+psycopg2
+
