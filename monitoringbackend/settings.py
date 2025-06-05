@@ -29,9 +29,19 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-*9w!i%-0ysds*)o$iq_=y^a-9inx@fdj80-g@3!2wyoixa(2iy'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
 
-ALLOWED_HOSTS = ["monitoringbackend-1075290745302.asia-southeast1.run.app", "localhost"]
+if os.getenv("ENV") == "development":
+    DEBUG = True
+else:
+    DEBUG =False
+
+
+LIST_ALLOWED_URLS = ["monitoringbackend-1075290745302.asia-southeast1.run.app", "monitoringapp-1075290745302.asia-southeast1.run.app","localhost"]
+
+
+
+ALLOWED_HOSTS = LIST_ALLOWED_URLS
+CSRF_TRUSTED_ORIGINS = LIST_ALLOWED_URLS
 
 AUTH_USER_MODEL = 'accounts.Users'
 # Application definition
