@@ -28,5 +28,10 @@ COPY . .
 # Expose port
 EXPOSE 8000
 
+# Jalankan collectstatic tanpa interaktif
+RUN python manage.py collectstatic --noinput
+
+
 # Perintah default
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+CMD ["gunicorn", "monitoringbackend.wsgi:application", "--bind", "0.0.0.0:8000"]
+
