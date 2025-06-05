@@ -3,4 +3,5 @@ Django
 whitenoise
 psycopg2-binary
 psycopg2
-
+gdal==3.6.0       # Ganti sesuai versi yang cocok dari OS (`gdalinfo --version`)
+pyproj
