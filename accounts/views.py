@@ -4,8 +4,38 @@ from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from django.contrib.auth import authenticate
-# from .models import Users
+from .models import Users
+from rest_framework import status
+from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
+
+
+@api_view(['POST'])
+def save_google_user(request):
+    user_id = request.GET.get('id')
+    data = request.data
+
+    if not user_id or 'email' not in data:
+        return Response({"detail": "Missing user ID or email"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        user, created = Users.objects.update_or_create(
+            email=data['email'],
+            defaults={
+                'name': data.get('name', ''),
+                'picture': data.get('image', ''),
+                'date_joined': timezone.now(),
+            }
+        )
+        return Response({
+            "message": "User created" if created else "User updated",
+            "user_id": str(user.id),
+            "email": user.email,
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
 
 @api_view(['POST'])
 @permission_classes([AllowAny])

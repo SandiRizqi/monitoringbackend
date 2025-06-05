@@ -31,7 +31,7 @@ SECRET_KEY = 'django-insecure-*9w!i%-0ysds*)o$iq_=y^a-9inx@fdj80-g@3!2wyoixa(2iy
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["monitoringbackend-1075290745302.asia-southeast1.run.app", "localhost"]
 
 AUTH_USER_MODEL = 'accounts.Users'
 # Application definition
@@ -130,7 +130,8 @@ AUTH_PASSWORD_VALIDATORS = [
 
 LANGUAGE_CODE = 'en-us'
 
-TIME_ZONE = 'UTC'
+# TIME_ZONE = 'UTC'
+TIME_ZONE = 'Asia/Jakarta'
 
 USE_I18N = True
 
