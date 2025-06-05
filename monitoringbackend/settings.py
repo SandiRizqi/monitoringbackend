@@ -41,7 +41,7 @@ LIST_ALLOWED_URLS = ["monitoringbackend-1075290745302.asia-southeast1.run.app", 
 
 
 ALLOWED_HOSTS = LIST_ALLOWED_URLS
-CSRF_TRUSTED_ORIGINS = LIST_ALLOWED_URLS
+CSRF_TRUSTED_ORIGINS = ["https://" + x for x in ALLOWED_HOSTS]
 
 AUTH_USER_MODEL = 'accounts.Users'
 # Application definition
