@@ -29,14 +29,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-*9w!i%-0ysds*)o$iq_=y^a-9inx@fdj80-g@3!2wyoixa(2iy'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-
-if os.getenv("ENV") == "development":
-    DEBUG = True
-else:
-    DEBUG =False
+IS_PRODUCTION = os.getenv('ENV') == 'production'
 
 
-LIST_ALLOWED_URLS = ["monitoringbackend-1075290745302.asia-southeast1.run.app", "monitoringapp-1075290745302.asia-southeast1.run.app","localhost"]
+DEBUG = not IS_PRODUCTION
+
+
+LIST_ALLOWED_URLS = ["monitoringbackend-1075290745302.asia-southeast1.run.app", "monitoringapp-1075290745302.asia-southeast1.run.app","127.0.0.1"]
 
 
 
@@ -164,7 +163,8 @@ STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Untuk redirect dan CSRF protection
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-SECURE_SSL_REDIRECT = True
-SESSION_COOKIE_SECURE = True
-CSRF_COOKIE_SECURE = True
+# SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+SECURE_SSL_REDIRECT = IS_PRODUCTION
+SESSION_COOKIE_SECURE = IS_PRODUCTION
+CSRF_COOKIE_SECURE = IS_PRODUCTION
+SECURE_PROXY_SSL_HEADER = None

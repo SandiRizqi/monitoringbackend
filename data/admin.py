@@ -1,18 +1,32 @@
 from django.contrib import admin
-from django.contrib.gis.forms import OSMWidget
 from django import forms
+from django.utils.safestring import mark_safe
 from .models import AreaOfInterest
+
+class ColorAlphaWidget(forms.TextInput):
+    class Media:
+        js = ('https://jscolor.com/releases/2.4.6/jscolor.js',)
+
+    def __init__(self, attrs=None):
+        default_attrs = {
+            'class': 'jscolor',
+            'data-jscolor': '{"alpha":1, "hash":true, "format":"hex"}'
+        }
+        if attrs:
+            default_attrs.update(attrs)
+        super().__init__(attrs=default_attrs)
 
 class AreaOfInterestForm(forms.ModelForm):
     class Meta:
         model = AreaOfInterest
         fields = '__all__'
         widgets = {
-            'geometry': OSMWidget(attrs={'map_width': 800, 'map_height': 500}),
+            'fill_color': ColorAlphaWidget(),
+            'stroke_color': ColorAlphaWidget(),
         }
 
-@admin.register(AreaOfInterest)
 class AreaOfInterestAdmin(admin.ModelAdmin):
     form = AreaOfInterestForm
-    list_display = ("name", "geometry_type", "created_at")
-    search_fields = ("name", "description")
+    list_display = ('name', 'geometry_type', 'fill_color', 'stroke_color')
+
+admin.site.register(AreaOfInterest, AreaOfInterestAdmin)

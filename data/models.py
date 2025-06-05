@@ -30,7 +30,7 @@ class AreaOfInterest(models.Model):
         help_text="Untuk Point (diameter marker)"
     )
 
-    tags = models.JSONField(blank=True, null=True)
+  
 
     class Meta:
         verbose_name = "Area of Interest"
