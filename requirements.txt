@@ -3,7 +3,5 @@ Django
 whitenoise
 psycopg2-binary
 psycopg2
-gdal
-pyproj
 django-cors-headers
 djangorestframework
