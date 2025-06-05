@@ -8,6 +8,38 @@ from .models import Users
 from rest_framework import status
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.authtoken.models import Token
+
+@api_view(['POST'])
+def save_google_user(request):
+    data = request.data
+
+    if 'email' not in data:
+        return Response({"detail": "Missing email"}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        user, created = Users.objects.update_or_create(
+            email=data['email'],
+            defaults={
+                'name': data.get('name', ''),
+                'picture': data.get('image', ''),
+                'date_joined': timezone.now(),
+            }
+        )
+
+        # Generate atau ambil token untuk user
+        token, _ = Token.objects.get_or_create(user=user)
+
+        return Response({
+            "message": "User created" if created else "User updated",
+            "user_id": str(user.id),
+            "email": user.email,
+            "token": token.key,    # token untuk autentikasi
+        }, status=status.HTTP_200_OK)
+
+    except Exception as e:
+        return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 
 @api_view(['POST'])
