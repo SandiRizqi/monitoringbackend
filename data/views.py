@@ -4,12 +4,23 @@ from rest_framework.response import Response
 from rest_framework import status
 from .models import AreaOfInterest
 from .serializer import AreaOfInterestSerializer
+from django.shortcuts import get_object_or_404
 
 class UserAOIListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         user = request.user
+        aoi_id = request.query_params.get('id')
+        include_geom = request.query_params.get('geom') == 'true'
+
+        # Jika ada id → ambil 1 AOI
+        if aoi_id:
+            queryset = get_object_or_404(AreaOfInterest, id=aoi_id, users_aoi=user)
+            serializer = AreaOfInterestSerializer(queryset, context={'request': request})
+            return Response(serializer.data)
+
+        # Kalau tidak ada id → ambil semua AOI milik user
         queryset = AreaOfInterest.objects.filter(users_aoi=user)
         serializer = AreaOfInterestSerializer(queryset, many=True, context={'request': request})
         return Response(serializer.data)
