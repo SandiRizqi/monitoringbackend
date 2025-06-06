@@ -35,13 +35,14 @@ IS_PRODUCTION = os.getenv('ENV') == 'production'
 DEBUG = not IS_PRODUCTION
 
 
-LIST_ALLOWED_URLS = ["monitoringbackend-1075290745302.asia-southeast1.run.app", "monitoringapp-1075290745302.asia-southeast1.run.app","127.0.0.1"]
+LIST_ALLOWED_URLS = ["monitoringbackend-1075290745302.asia-southeast1.run.app", "monitoringapp-1075290745302.asia-southeast1.run.app","127.0.0.1", "localhost:3000"]
 
 
 
 ALLOWED_HOSTS = LIST_ALLOWED_URLS
 CSRF_TRUSTED_ORIGINS = ["https://" + x for x in ALLOWED_HOSTS]
-CORS_ALLOWED_ORIGINS = ["https://" + x for x in ALLOWED_HOSTS]
+CORS_ALLOWED_ORIGINS = ["https://" + x for x in ALLOWED_HOSTS] + ["http://localhost:3000"]
+
 
 AUTH_USER_MODEL = 'accounts.Users'
 # Application definition
@@ -62,8 +63,8 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
     'corsheaders.middleware.CorsMiddleware',
+    'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
