@@ -5,6 +5,7 @@ from rest_framework import status
 from .models import AreaOfInterest
 from .serializer import AreaOfInterestSerializer
 from django.shortcuts import get_object_or_404
+import json
 
 class UserAOIListView(APIView):
     permission_classes = [IsAuthenticated]
@@ -14,15 +15,36 @@ class UserAOIListView(APIView):
         aoi_id = request.query_params.get('id')
         include_geom = request.query_params.get('geom') == 'true'
 
-        # Jika ada id → ambil 1 AOI
         if aoi_id:
-            queryset = get_object_or_404(AreaOfInterest, id=aoi_id, users_aoi=user)
-            serializer = AreaOfInterestSerializer(queryset, context={'request': request})
-            return Response(serializer.data)
+            queryset = AreaOfInterest.objects.filter(id=aoi_id, users_aoi=user)
+        else:
+            queryset = AreaOfInterest.objects.filter(users_aoi=user)
 
-        # Kalau tidak ada id → ambil semua AOI milik user
-        queryset = AreaOfInterest.objects.filter(users_aoi=user)
         serializer = AreaOfInterestSerializer(queryset, many=True, context={'request': request})
+
+        if include_geom:
+            features = []
+            for obj, serialized in zip(queryset, serializer.data):
+                geometry_str = serialized.get("geometry")
+                try:
+                    geometry = json.loads(geometry_str) if geometry_str else None
+                except json.JSONDecodeError:
+                    geometry = None
+
+                # Remove the 'geometry' from properties (to avoid duplication)
+                properties = {k: v for k, v in serialized.items() if k != "geometry"}
+
+                features.append({
+                    "type": "Feature",
+                    "geometry": geometry,
+                    "properties": properties
+                })
+
+            return Response({
+                "type": "FeatureCollection",
+                "features": features
+            })
+
         return Response(serializer.data)
 
     def post(self, request):
