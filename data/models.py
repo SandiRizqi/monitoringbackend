@@ -35,6 +35,12 @@ class AreaOfInterest(models.Model):
     class Meta:
         verbose_name = "Area of Interest"
         verbose_name_plural = "Areas of Interest"
+        # permissions = [
+        #         ("delete_areaofinterest", "Can delete area of interest"),
+        #         ("add_areaofinterest", "Can add area of interest"),
+        #         ("change_areaofinterest", "Can change area of interest"),
+        #         ]
+
 
     def __str__(self):
         return self.name

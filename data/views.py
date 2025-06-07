@@ -96,3 +96,22 @@ class UserAOIListView(APIView):
                 new_aoi.save()
                 return Response(serializer.data, status=status.HTTP_201_CREATED)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+    def delete(self, request):
+        user = request.user
+        aoi_id = request.query_params.get('id')
+
+        if not aoi_id:
+            return Response({'detail': 'AOI ID is required to delete.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            aoi = AreaOfInterest.objects.get(id=aoi_id)
+        except AreaOfInterest.DoesNotExist:
+            return Response({'detail': 'Area of Interest not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Check permission and ownership
+        if not user.has_perm('data.delete_areaofinterest') or user not in aoi.users_aoi.all():
+            return Response({'detail': 'You do not have permission to delete this Area of Interest.'}, status=status.HTTP_403_FORBIDDEN)
+
+        aoi.delete()
+        return Response({'detail': 'Area of Interest deleted successfully.'}, status=status.HTTP_204_NO_CONTENT)
