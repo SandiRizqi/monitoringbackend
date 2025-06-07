@@ -116,7 +116,7 @@ class UserAOIListView(APIView):
                 return Response({'detail': 'You do not have permission to delete this Area of Interest.'}, status=status.HTTP_403_FORBIDDEN)
 
             aoi.delete()
-            return Response({'detail': 'Area of Interest deleted successfully.'}, status=status.HTTP_204_NO_CONTENT)
+            return Response({'detail': 'Area of Interest deleted successfully.'}, status=status.HTTP_200_OK)
 
         except Exception as e:
             logger.exception("Unhandled error in delete AOI")
