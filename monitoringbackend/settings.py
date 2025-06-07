@@ -35,7 +35,7 @@ IS_PRODUCTION = os.getenv('ENV') == 'production'
 DEBUG = not IS_PRODUCTION
 
 
-LIST_ALLOWED_URLS = ["monitoringbackend-1075290745302.asia-southeast1.run.app", "monitoringapp-1075290745302.asia-southeast1.run.app","127.0.0.1", "localhost:3000"]
+LIST_ALLOWED_URLS = ["monitoringbackend-1075290745302.asia-southeast1.run.app", "monitoringapp-1075290745302.asia-southeast1.run.app","127.0.0.1", "localhost"]
 
 
 
@@ -55,6 +55,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'rest_framework_gis',
     'rest_framework.authtoken',
     'corsheaders',
     'data',

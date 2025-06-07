@@ -3,8 +3,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from .models import AreaOfInterest
-from .serializer import AreaOfInterestSerializer
-from django.shortcuts import get_object_or_404
+from .serializer import AreaOfInterestSerializer, AreaOfInterestGeoSerializer
+# from django.shortcuts import get_object_or_404
 import json
 
 class UserAOIListView(APIView):
@@ -20,9 +20,9 @@ class UserAOIListView(APIView):
         else:
             queryset = AreaOfInterest.objects.filter(users_aoi=user)
 
-        serializer = AreaOfInterestSerializer(queryset, many=True, context={'request': request})
-
         if include_geom:
+            # Pakai serializer GeoJSON yang sudah ada
+            serializer = AreaOfInterestSerializer(queryset, many=True, context={'request': request})
             features = []
             for obj, serialized in zip(queryset, serializer.data):
                 geometry_str = serialized.get("geometry")
@@ -31,7 +31,7 @@ class UserAOIListView(APIView):
                 except json.JSONDecodeError:
                     geometry = None
 
-                # Remove the 'geometry' from properties (to avoid duplication)
+                # Hapus geometry dari properties agar tidak duplikat
                 properties = {k: v for k, v in serialized.items() if k != "geometry"}
 
                 features.append({
@@ -44,13 +44,16 @@ class UserAOIListView(APIView):
                 "type": "FeatureCollection",
                 "features": features
             })
-
-        return Response(serializer.data)
+        else:
+            # Pakai serializer simple tanpa geometry atau geometry diolah beda
+            serializer = AreaOfInterestSerializer(queryset, many=True)
+            return Response(serializer.data)
 
     def post(self, request):
         user = request.user
         data = request.data
         aoi_id = data.get('id', None)
+        # print(data)
 
         if aoi_id:
             try:
@@ -64,7 +67,7 @@ class UserAOIListView(APIView):
                 if not user.has_perm('data.change_areaofinterest') or user not in aoi.users_aoi.all():
                     return Response({'detail': 'You do not have permission to change this Area of Interest.'}, status=status.HTTP_403_FORBIDDEN)
 
-                serializer = AreaOfInterestSerializer(aoi, data=data, partial=True, context={'request': request})
+                serializer = AreaOfInterestGeoSerializer(aoi, data=data, partial=True, context={'request': request})
                 if serializer.is_valid():
                     serializer.save()
                     return Response(serializer.data)
@@ -74,7 +77,7 @@ class UserAOIListView(APIView):
                 if not user.has_perm('data.add_areaofinterest'):
                     return Response({'detail': 'You do not have permission to add Area of Interest.'}, status=status.HTTP_403_FORBIDDEN)
                 
-                serializer = AreaOfInterestSerializer(data=data, context={'request': request})
+                serializer = AreaOfInterestGeoSerializer(data=data, context={'request': request})
                 if serializer.is_valid():
                     new_aoi = serializer.save()
                     new_aoi.users_aoi.add(user)
@@ -86,7 +89,7 @@ class UserAOIListView(APIView):
             if not user.has_perm('data.add_areaofinterest'):
                 return Response({'detail': 'You do not have permission to add Area of Interest.'}, status=status.HTTP_403_FORBIDDEN)
             
-            serializer = AreaOfInterestSerializer(data=data, context={'request': request})
+            serializer = AreaOfInterestGeoSerializer(data=data, context={'request': request})
             if serializer.is_valid():
                 new_aoi = serializer.save()
                 new_aoi.users_aoi.add(user)

@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from rest_framework_gis.serializers import GeoFeatureModelSerializer
 from .models import AreaOfInterest
 
 class AreaOfInterestSerializer(serializers.ModelSerializer):
@@ -7,6 +8,7 @@ class AreaOfInterestSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AreaOfInterest
+        geo_field = "geometry"  # penting!
         fields = '__all__'
 
     def get_geometry_type(self, obj):
@@ -25,3 +27,10 @@ class AreaOfInterestSerializer(serializers.ModelSerializer):
             rep.pop('geometry', None)
         return rep
 
+
+
+class AreaOfInterestGeoSerializer(GeoFeatureModelSerializer):
+    class Meta:
+        model = AreaOfInterest
+        geo_field = "geometry"   # nama field geometry di model kamu
+        fields = '__all__'
