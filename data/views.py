@@ -6,6 +6,8 @@ from .models import AreaOfInterest
 from .serializer import AreaOfInterestSerializer, AreaOfInterestGeoSerializer
 # from django.shortcuts import get_object_or_404
 import json
+import logging
+logger = logging.getLogger(__name__)
 
 class UserAOIListView(APIView):
     permission_classes = [IsAuthenticated]
@@ -98,20 +100,24 @@ class UserAOIListView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
     def delete(self, request):
-        user = request.user
-        aoi_id = request.query_params.get('id')
-
-        if not aoi_id:
-            return Response({'detail': 'AOI ID is required to delete.'}, status=status.HTTP_400_BAD_REQUEST)
-
         try:
-            aoi = AreaOfInterest.objects.get(id=aoi_id)
-        except AreaOfInterest.DoesNotExist:
-            return Response({'detail': 'Area of Interest not found.'}, status=status.HTTP_404_NOT_FOUND)
+            user = request.user
+            aoi_id = request.query_params.get('id')
 
-        # Check permission and ownership
-        if not user.has_perm('data.delete_areaofinterest') or user not in aoi.users_aoi.all():
-            return Response({'detail': 'You do not have permission to delete this Area of Interest.'}, status=status.HTTP_403_FORBIDDEN)
+            if not aoi_id:
+                return Response({'detail': 'AOI ID is required to delete.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        aoi.delete()
-        return Response({'detail': 'Area of Interest deleted successfully.'}, status=status.HTTP_204_NO_CONTENT)
+            try:
+                aoi = AreaOfInterest.objects.get(id=aoi_id)
+            except AreaOfInterest.DoesNotExist:
+                return Response({'detail': 'Area of Interest not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+            if not user.has_perm('data.delete_areaofinterest') or user not in aoi.users_aoi.all():
+                return Response({'detail': 'You do not have permission to delete this Area of Interest.'}, status=status.HTTP_403_FORBIDDEN)
+
+            aoi.delete()
+            return Response({'detail': 'Area of Interest deleted successfully.'}, status=status.HTTP_204_NO_CONTENT)
+
+        except Exception as e:
+            logger.exception("Unhandled error in delete AOI")
+            return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
