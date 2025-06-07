@@ -13,6 +13,8 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 from pathlib import Path
 import os
 from dotenv import load_dotenv
+from corsheaders.defaults import default_headers
+
 
 
 load_dotenv()
@@ -42,6 +44,22 @@ LIST_ALLOWED_URLS = ["monitoringbackend-1075290745302.asia-southeast1.run.app", 
 ALLOWED_HOSTS = LIST_ALLOWED_URLS
 CSRF_TRUSTED_ORIGINS = ["https://" + x for x in ALLOWED_HOSTS]
 CORS_ALLOWED_ORIGINS = ["https://" + x for x in ALLOWED_HOSTS] + ["http://localhost:3000"]
+
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    'authorization',
+    'x-csrftoken',
+]
+
+CORS_ALLOW_METHODS = [
+    "DELETE",
+    "GET",
+    "OPTIONS",
+    "PATCH",
+    "POST",
+    "PUT",
+]
+
+CORS_ALLOW_CREDENTIALS = True
 
 
 AUTH_USER_MODEL = 'accounts.Users'
