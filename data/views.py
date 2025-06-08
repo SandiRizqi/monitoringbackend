@@ -4,6 +4,9 @@ from rest_framework.response import Response
 from rest_framework import status
 from .models import AreaOfInterest
 from .serializer import AreaOfInterestSerializer, AreaOfInterestGeoSerializer
+from django.http import HttpResponse, HttpResponseForbidden
+from rest_framework.authtoken.models import Token
+from django.db import connection
 # from django.shortcuts import get_object_or_404
 import json
 import logging
@@ -121,3 +124,62 @@ class UserAOIListView(APIView):
         except Exception as e:
             logger.exception("Unhandled error in delete AOI")
             return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+
+class UserAreaOfInterestTileView(APIView):
+    # permission_classes = [IsAuthenticated]
+
+    def get(self, request, z, x, y):
+        token_key = request.query_params.get('token')
+        if not token_key:
+            return HttpResponseForbidden("Token required")
+
+        try:
+            token_obj = Token.objects.select_related('user').get(key=token_key)
+        except Token.DoesNotExist:
+            return HttpResponseForbidden("Invalid token")
+
+        user = token_obj.user
+        user_id = user.id  # pakai user id untuk query
+
+        sql = """
+            WITH
+            tile_bounds AS (
+                SELECT ST_TileEnvelope(%s, %s, %s) AS geom
+            ),
+            mvtgeom AS (
+                SELECT
+                    aoi.id,
+                    aoi.name,
+                    aoi.fill_color,
+                    aoi.stroke_color,
+                    aoi.stroke_width,
+                    aoi.marker_size,
+                    ST_AsMVTGeom(
+                        ST_Transform(aoi.geometry, 3857),
+                        tile_bounds.geom,
+                        4096,
+                        64,
+                        true
+                    ) AS geom
+                FROM data_areaofinterest aoi
+                JOIN accounts_users_areas_of_interest u ON aoi.id = u.areaofinterest_id
+                CROSS JOIN tile_bounds
+                WHERE u.users_id = %s
+                AND ST_Intersects(ST_Transform(aoi.geometry, 3857), tile_bounds.geom)
+                AND ST_IsValid(aoi.geometry)
+            )
+            SELECT ST_AsMVT(mvtgeom.*, 'layer', 4096, 'geom') FROM mvtgeom;
+            """
+
+
+        with connection.cursor() as cursor:
+            cursor.execute(sql, [z, x, y, str(user_id)])
+            tile = cursor.fetchone()[0]
+
+        if tile:
+            return HttpResponse(tile, content_type="application/x-protobuf")
+        return HttpResponse(status=204)
