@@ -48,3 +48,27 @@ class AreaOfInterest(models.Model):
     @property
     def geometry_type(self):
         return self.geometry.geom_type if self.geometry else None
+    
+sources = (("LAPAN", "LAPAN"),
+           ("SIPONGI", "SIPONGI"))
+
+class Hotspots(models.Model):
+    id = models.CharField(max_length=255, primary_key=True)
+    key = models.CharField(max_length=255)
+    source = models.CharField(max_length=255)
+    radius = models.FloatField()
+    long = models.FloatField()
+    lat = models.FloatField()
+    provinsi = models.CharField(max_length=255)
+    kabupaten = models.CharField(max_length=255)
+    kecamatan = models.CharField(max_length=255)
+    date = models.DateField()
+    times = models.TimeField()
+    conf = models.IntegerField()
+    sat = models.CharField(max_length=255)
+    geom = models.PointField(srid=4326, geography=True, null=True, blank=True, editable=True)
+
+    def __str__(self):
+        return f"{self.id} - {self.key}"
+    
+    
