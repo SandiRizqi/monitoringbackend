@@ -22,11 +22,11 @@ class AreaOfInterest(models.Model):
         help_text="Untuk Polygon/Line/Point, hex tanpa alpha (cth: #333333)"
     )
     stroke_width = models.FloatField(
-        default=1.5,
+        default=1.0,
         help_text="Untuk LineString dan Point outline"
     )
     marker_size = models.FloatField(
-        default=6.0,
+        default=1.0,
         help_text="Untuk Point (diameter marker)"
     )
 

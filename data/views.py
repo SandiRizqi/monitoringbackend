@@ -154,10 +154,10 @@ class UserAreaOfInterestTileView(APIView):
                 SELECT
                     aoi.id,
                     aoi.name,
+                    aoi.description,
                     aoi.fill_color,
                     aoi.stroke_color,
                     aoi.stroke_width,
-                    aoi.marker_size,
                     ST_AsMVTGeom(
                         ST_Transform(aoi.geometry, 3857),
                         tile_bounds.geom,
