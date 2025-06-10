@@ -68,7 +68,32 @@ class Hotspots(models.Model):
     sat = models.CharField(max_length=255)
     geom = models.PointField(srid=4326, geography=True, null=True, blank=True, editable=True)
 
+    class Meta:
+        ordering = ['-date']
+
     def __str__(self):
         return f"{self.id} - {self.key}"
     
     
+class DeforestationAlerts(models.Model):
+    company = models.ForeignKey(AreaOfInterest, on_delete=models.CASCADE, related_name='deforestation_alerts')
+    key = models.CharField(max_length=255)
+    event_id = models.CharField(max_length=250, unique=True)
+    alert_date = models.DateField(default=timezone.now)
+    created = models.DateField(auto_now_add=True)
+    updated = models.DateField(auto_now=True)
+    confidence = models.IntegerField(blank=True, null=True, default=0)
+    area = models.DecimalField(max_digits=15, decimal_places=4, blank=True, null=True)
+    geom = models.MultiPolygonField(srid=4326, geography=True, null=True, blank=True)
+
+    class Meta:
+        ordering = ['-alert_date']
+        indexes = [
+            models.Index(fields=['alert_date']),
+            models.Index(fields=['event_id']),
+            models.Index(fields=['company']),
+            models.Index(fields=['geom']),
+        ]
+
+    def __str__(self):
+        return f"{self.company} - {self.alert_date} - {self.event_id}"
