@@ -1,6 +1,5 @@
 from django.contrib import admin
 from django import forms
-from django.contrib.gis.admin import OSMGeoAdmin
 from .models import AreaOfInterest, Hotspots, DeforestationAlerts
 
 class ColorAlphaWidget(forms.TextInput):
@@ -39,22 +38,17 @@ class HotspotsAdmin(admin.ModelAdmin):
     search_fields = ('id', 'key', 'source', 'provinsi', 'kabupaten', 'kecamatan')
     list_filter = ('provinsi', 'kabupaten', 'date', 'sat')
 
-class DeforestationAlertAdmin(OSMGeoAdmin):
+class DeforestationAlertAdmin(admin.ModelAdmin):
     list_display = ('event_id', 'company', 'alert_date', 'confidence', 'area', 'created', 'updated')
     list_filter = ('company', 'alert_date')
     search_fields = ('event_id', 'company__name')
     ordering = ('-alert_date',)
     readonly_fields = ('created', 'updated')
 
-    # Konfigurasi tampilan peta
-    default_lon = 110.0  # misal tengah Indonesia
-    default_lat = -2.0
-    default_zoom = 5
-
     # Optional: Mengatur fieldset
     fieldsets = (
         (None, {
-            'fields': ('event_id', 'company', 'alert_date', 'confidence', 'area', 'geom')
+            'fields': ('key','event_id', 'company', 'alert_date', 'confidence', 'area', 'geom')
         }),
         ('Timestamps', {
             'fields': ('created', 'updated'),

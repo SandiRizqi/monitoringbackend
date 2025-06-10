@@ -76,8 +76,8 @@ class Hotspots(models.Model):
     
     
 class DeforestationAlerts(models.Model):
+    id = models.CharField(max_length=255, primary_key=True)
     company = models.ForeignKey(AreaOfInterest, on_delete=models.CASCADE, related_name='deforestation_alerts')
-    key = models.CharField(max_length=255)
     event_id = models.CharField(max_length=250, unique=True)
     alert_date = models.DateField(default=timezone.now)
     created = models.DateField(auto_now_add=True)
