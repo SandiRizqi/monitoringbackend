@@ -84,7 +84,7 @@ class DeforestationAlerts(models.Model):
     updated = models.DateField(auto_now=True)
     confidence = models.IntegerField(blank=True, null=True, default=0)
     area = models.DecimalField(max_digits=15, decimal_places=4, blank=True, null=True)
-    geom = models.MultiPolygonField(srid=4326, geography=True, null=True, blank=True)
+    geom = models.PolygonField(srid=4326, geography=True, null=True, blank=True)
 
     class Meta:
         ordering = ['-alert_date']
