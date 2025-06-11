@@ -183,3 +183,62 @@ class UserAreaOfInterestTileView(APIView):
         if tile:
             return HttpResponse(tile, content_type="application/x-protobuf")
         return HttpResponse(status=204)
+    
+
+class UserDeforestationTileView(APIView):
+    # permission_classes = [IsAuthenticated]
+
+    def get(self, request, z, x, y):
+        token_key = request.query_params.get('token')
+        if not token_key:
+            return HttpResponseForbidden("Token required")
+
+        try:
+            token_obj = Token.objects.select_related('user').get(key=token_key)
+        except Token.DoesNotExist:
+            return HttpResponseForbidden("Invalid token")
+
+        user = token_obj.user
+        user_id = user.id
+
+        sql = """
+            WITH tile_bounds AS (
+                SELECT ST_TileEnvelope(%s, %s, %s) AS geom
+            ),
+            user_aoi AS (
+                SELECT areaofinterest_id
+                FROM accounts_users_areas_of_interest
+                WHERE users_id = %s
+            ),
+            mvtgeom AS (
+                SELECT
+                    alerts.id,
+                    alerts.event_id,
+                    alerts.alert_date,
+                    alerts.confidence,
+                    alerts.area,
+                    alerts.company_id,
+                    ST_AsMVTGeom(
+                        ST_Transform(alerts.geom::geometry, 3857),
+                        tile_bounds.geom,
+                        4096,
+                        64,
+                        true
+                    ) AS geom
+                FROM data_deforestationalerts alerts
+                JOIN user_aoi ON alerts.company_id = user_aoi.areaofinterest_id
+                CROSS JOIN tile_bounds
+                WHERE alerts.geom IS NOT NULL
+                AND ST_Intersects(ST_Transform(alerts.geom::geometry, 3857), tile_bounds.geom)
+                AND ST_IsValid(alerts.geom::geometry)
+            )
+            SELECT ST_AsMVT(mvtgeom.*, 'deforestation_alerts', 4096, 'geom') FROM mvtgeom;
+        """
+
+        with connection.cursor() as cursor:
+            cursor.execute(sql, [z, x, y, str(user_id)])
+            tile = cursor.fetchone()[0]
+
+        if tile:
+            return HttpResponse(tile, content_type="application/x-protobuf")
+        return HttpResponse(status=204)
