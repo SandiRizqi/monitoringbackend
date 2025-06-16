@@ -74,6 +74,51 @@ class Hotspots(models.Model):
     def __str__(self):
         return f"{self.id} - {self.key}"
     
+
+HOTSPOT_ALERT_CATEGORIES = (
+    ("AMAN", "Aman"),
+    ("PERHATIAN", "Perhatian"),
+    ("WASPADA", "Waspada"),
+    ("BAHAYA", "Bahaya"),
+)
+
+class HotspotAlert(models.Model):
+    id = models.AutoField(primary_key=True)
+    
+    hotspot = models.ForeignKey(
+        Hotspots, on_delete=models.CASCADE, related_name="alerts"
+    )
+    area_of_interest = models.ForeignKey(
+        AreaOfInterest, on_delete=models.CASCADE, related_name="hotspot_alerts"
+    )
+
+    distance = models.FloatField(
+        help_text="Jarak dari hotspot ke batas AOI (meter)", blank=True, null=True
+    )
+
+    category = models.CharField(
+        max_length=10,
+        choices=HOTSPOT_ALERT_CATEGORIES,
+        default="AMAN"
+    )
+
+    alert_date = models.DateField(default=timezone.now)
+    confidence = models.IntegerField(blank=True, null=True)
+    description = models.TextField(blank=True, null=True)
+
+    class Meta:
+        ordering = ['-alert_date']
+        indexes = [
+            models.Index(fields=['alert_date']),
+            models.Index(fields=['category']),
+            models.Index(fields=['hotspot']),
+            models.Index(fields=['area_of_interest']),
+        ]
+        unique_together = ('hotspot', 'area_of_interest')
+
+    def __str__(self):
+        return f"{self.alert_date} - {self.area_of_interest.name} - {self.category}"
+    
     
 class DeforestationAlerts(models.Model):
     id = models.CharField(max_length=255, primary_key=True)
