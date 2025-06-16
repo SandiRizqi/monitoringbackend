@@ -54,7 +54,7 @@ class DeforestationAlertAdmin(admin.ModelAdmin):
     # Optional: Mengatur fieldset
     fieldsets = (
         (None, {
-            'fields': ('key','event_id', 'company', 'alert_date', 'confidence', 'area', 'geom')
+            'fields': ('event_id', 'company', 'alert_date', 'confidence', 'area', 'geom')
         }),
         ('Timestamps', {
             'fields': ('created', 'updated'),

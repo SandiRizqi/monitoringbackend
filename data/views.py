@@ -185,6 +185,71 @@ class UserAreaOfInterestTileView(APIView):
         return HttpResponse(status=204)
     
 
+    
+class UserHotspotAlertTileView(APIView):
+    # Anda bisa aktifkan permission jika sudah setup DRF auth:
+    # authentication_classes = [TokenAuthentication]
+    # permission_classes = [IsAuthenticated]
+
+    def get(self, request, z, x, y):
+        token_key = request.query_params.get('token')
+        if not token_key:
+            return HttpResponseForbidden("Token required")
+
+        try:
+            token_obj = Token.objects.select_related('user').get(key=token_key)
+        except Token.DoesNotExist:
+            return HttpResponseForbidden("Invalid token")
+
+        user_id = token_obj.user.id
+
+        sql = """
+                    WITH tile_bounds AS (
+                        SELECT ST_TileEnvelope(%s, %s, %s) AS geom
+                    ),
+                    user_aoi AS (
+                        SELECT areaofinterest_id
+                        FROM accounts_users_areas_of_interest
+                        WHERE users_id = %s
+                    ),
+                    mvtgeom AS (
+                        SELECT
+                            alerts.id,
+                            alerts.alert_date,
+                            alerts.category,
+                            COALESCE(alerts.confidence, 0) AS confidence,
+                            alerts.distance,
+                            alerts.area_of_interest_id,
+                            alerts.hotspot_id,
+                            ST_AsMVTGeom(
+                                ST_Transform(h.geom::geometry, 3857),
+                                tile_bounds.geom,
+                                4096,
+                                64,
+                                true
+                            ) AS geom
+                        FROM data_hotspotalert alerts
+                        JOIN user_aoi ON alerts.area_of_interest_id = user_aoi.areaofinterest_id
+                        JOIN data_hotspots h ON alerts.hotspot_id = h.id
+                        CROSS JOIN tile_bounds
+                        WHERE h.geom IS NOT NULL
+                        AND ST_Intersects(ST_Transform(h.geom::geometry, 3857), tile_bounds.geom)
+                        AND ST_IsValid(h.geom::geometry)
+                    )
+                    SELECT ST_AsMVT(mvtgeom.*, 'hotspot_alerts', 4096, 'geom') FROM mvtgeom;
+                """
+
+
+        with connection.cursor() as cursor:
+            cursor.execute(sql, [z, x, y, str(user_id)])
+            tile = cursor.fetchone()[0]
+
+        if tile:
+            return HttpResponse(tile, content_type="application/x-protobuf")
+        return HttpResponse(status=204)
+    
+
+
 class UserDeforestationTileView(APIView):
     # permission_classes = [IsAuthenticated]
 
@@ -242,3 +307,4 @@ class UserDeforestationTileView(APIView):
         if tile:
             return HttpResponse(tile, content_type="application/x-protobuf")
         return HttpResponse(status=204)
+    
