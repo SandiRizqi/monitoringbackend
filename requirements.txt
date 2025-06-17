@@ -7,3 +7,4 @@ django-cors-headers
 djangorestframework
 djangorestframework-gis
 gunicorn
+python-dateutil

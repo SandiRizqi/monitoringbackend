@@ -7,7 +7,12 @@ from .serializer import AreaOfInterestSerializer, AreaOfInterestGeoSerializer
 from django.http import HttpResponse, HttpResponseForbidden
 from rest_framework.authtoken.models import Token
 from django.db import connection
-# from django.shortcuts import get_object_or_404
+from rest_framework import status, permissions
+from django.shortcuts import get_object_or_404
+from .models import HotspotAlert, AreaOfInterest
+from .serializer import HotspotAlertSerializer, HotspotAlertGeoSerializer
+from datetime import date
+from dateutil.parser import parse as dateparse
 import json
 import logging
 logger = logging.getLogger(__name__)
@@ -124,7 +129,52 @@ class UserAOIListView(APIView):
         except Exception as e:
             logger.exception("Unhandled error in delete AOI")
             return Response({'detail': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
 
+
+class HotspotAlertAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk=None):
+        user = request.user
+        aoi_id = request.query_params.get("aoi_id")
+        include_geom = request.query_params.get("geom", "false").lower() == "true"
+
+        queryset = HotspotAlert.objects.filter(area_of_interest__in=AreaOfInterest.objects.filter(users_aoi=user))
+
+        if pk:
+            # Detail view
+            alert = get_object_or_404(queryset, pk=pk)
+            serializer = HotspotAlertGeoSerializer(alert) if include_geom else HotspotAlertSerializer(alert)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        # List view
+        if aoi_id:
+            queryset = queryset.filter(area_of_interest_id=aoi_id)
+
+        serializer_class = HotspotAlertGeoSerializer if include_geom else HotspotAlertSerializer
+        serializer = serializer_class(queryset, many=True)
+
+        if include_geom:
+            features = []
+            for obj, data in zip(queryset, serializer.data):
+                geometry = data.get("hotspot_geom") or data.get("geom")
+                try:
+                    geometry = json.loads(geometry) if geometry else None
+                except json.JSONDecodeError:
+                    geometry = None
+                properties = {k: v for k, v in data.items() if k != "hotspot_geom" and k != "geom"}
+                features.append({
+                    "type": "Feature",
+                    "geometry": geometry,
+                    "properties": properties
+                })
+            return Response({
+                "type": "FeatureCollection",
+                "features": features
+            })
+
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
 
 
@@ -185,68 +235,90 @@ class UserAreaOfInterestTileView(APIView):
         return HttpResponse(status=204)
     
 
-    
+
 class UserHotspotAlertTileView(APIView):
-    # Anda bisa aktifkan permission jika sudah setup DRF auth:
     # authentication_classes = [TokenAuthentication]
     # permission_classes = [IsAuthenticated]
 
     def get(self, request, z, x, y):
-        token_key = request.query_params.get('token')
+        token_key = request.query_params.get("token")
         if not token_key:
             return HttpResponseForbidden("Token required")
 
         try:
-            token_obj = Token.objects.select_related('user').get(key=token_key)
+            token_obj = Token.objects.select_related("user").get(key=token_key)
         except Token.DoesNotExist:
             return HttpResponseForbidden("Invalid token")
 
         user_id = token_obj.user.id
 
-        sql = """
-                    WITH tile_bounds AS (
-                        SELECT ST_TileEnvelope(%s, %s, %s) AS geom
-                    ),
-                    user_aoi AS (
-                        SELECT areaofinterest_id
-                        FROM accounts_users_areas_of_interest
-                        WHERE users_id = %s
-                    ),
-                    mvtgeom AS (
-                        SELECT
-                            alerts.id,
-                            alerts.alert_date,
-                            alerts.category,
-                            COALESCE(alerts.confidence, 0) AS confidence,
-                            alerts.distance,
-                            alerts.area_of_interest_id,
-                            alerts.hotspot_id,
-                            ST_AsMVTGeom(
-                                ST_Transform(h.geom::geometry, 3857),
-                                tile_bounds.geom,
-                                4096,
-                                64,
-                                true
-                            ) AS geom
-                        FROM data_hotspotalert alerts
-                        JOIN user_aoi ON alerts.area_of_interest_id = user_aoi.areaofinterest_id
-                        JOIN data_hotspots h ON alerts.hotspot_id = h.id
-                        CROSS JOIN tile_bounds
-                        WHERE h.geom IS NOT NULL
-                        AND ST_Intersects(ST_Transform(h.geom::geometry, 3857), tile_bounds.geom)
-                        AND ST_IsValid(h.geom::geometry)
-                    )
-                    SELECT ST_AsMVT(mvtgeom.*, 'hotspot_alerts', 4096, 'geom') FROM mvtgeom;
-                """
+        # Ambil parameter waktu
+        startdate = request.query_params.get("startdate")
+        enddate = request.query_params.get("enddate")
+        today = request.query_params.get("today") == "true"
 
+        # Filter waktu SQL tambahan
+        time_filter_sql = ""
+        time_filter_params = []
+
+        if today:
+            time_filter_sql = "AND alerts.alert_date = %s"
+            time_filter_params = [date.today()]
+        elif startdate and enddate:
+            try:
+                start = dateparse(startdate).date()
+                end = dateparse(enddate).date()
+                time_filter_sql = "AND alerts.alert_date BETWEEN %s AND %s"
+                time_filter_params = [start, end]
+            except Exception:
+                return HttpResponse("Invalid startdate or enddate format. Use YYYY-MM-DD", status=400)
+
+        # SQL utama
+        sql = f"""
+            WITH tile_bounds AS (
+                SELECT ST_TileEnvelope(%s, %s, %s) AS geom
+            ),
+            user_aoi AS (
+                SELECT areaofinterest_id
+                FROM accounts_users_areas_of_interest
+                WHERE users_id = %s
+            ),
+            mvtgeom AS (
+                SELECT
+                    alerts.id,
+                    alerts.alert_date,
+                    alerts.category,
+                    COALESCE(alerts.confidence, 0) AS confidence,
+                    alerts.distance,
+                    alerts.area_of_interest_id,
+                    alerts.hotspot_id,
+                    ST_AsMVTGeom(
+                        ST_Transform(h.geom::geometry, 3857),
+                        tile_bounds.geom,
+                        4096,
+                        64,
+                        true
+                    ) AS geom
+                FROM data_hotspotalert alerts
+                JOIN user_aoi ON alerts.area_of_interest_id = user_aoi.areaofinterest_id
+                JOIN data_hotspots h ON alerts.hotspot_id = h.id
+                CROSS JOIN tile_bounds
+                WHERE h.geom IS NOT NULL
+                AND ST_Intersects(ST_Transform(h.geom::geometry, 3857), tile_bounds.geom)
+                AND ST_IsValid(h.geom::geometry)
+                {time_filter_sql}
+            )
+            SELECT ST_AsMVT(mvtgeom.*, 'hotspot_alerts', 4096, 'geom') FROM mvtgeom;
+        """
 
         with connection.cursor() as cursor:
-            cursor.execute(sql, [z, x, y, str(user_id)])
+            cursor.execute(sql, [z, x, y, str(user_id)] + time_filter_params)
             tile = cursor.fetchone()[0]
 
         if tile:
             return HttpResponse(tile, content_type="application/x-protobuf")
         return HttpResponse(status=204)
+
     
 
 

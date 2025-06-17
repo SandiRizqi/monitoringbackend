@@ -70,6 +70,10 @@ class Hotspots(models.Model):
 
     class Meta:
         ordering = ['-date']
+        indexes = [
+            models.Index(fields=['date']),
+            models.Index(fields=['conf']),
+        ]
 
     def __str__(self):
         return f"{self.id} - {self.key}"

@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from rest_framework_gis.serializers import GeoFeatureModelSerializer
-from .models import AreaOfInterest
+from .models import AreaOfInterest, HotspotAlert
 
 class AreaOfInterestSerializer(serializers.ModelSerializer):
     geometry_type = serializers.SerializerMethodField()
@@ -34,3 +34,21 @@ class AreaOfInterestGeoSerializer(GeoFeatureModelSerializer):
         model = AreaOfInterest
         geo_field = "geometry"   # nama field geometry di model kamu
         fields = '__all__'
+
+
+
+
+class HotspotAlertSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HotspotAlert
+        fields = '__all__'
+
+class HotspotAlertGeoSerializer(serializers.ModelSerializer):
+    hotspot_geom = serializers.SerializerMethodField()
+
+    class Meta:
+        model = HotspotAlert
+        fields = '__all__'
+
+    def get_hotspot_geom(self, obj):
+        return obj.hotspot.geom.geojson if obj.hotspot and obj.hotspot.geom else None
