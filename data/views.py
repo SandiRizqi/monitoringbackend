@@ -2,6 +2,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.decorators import api_view, permission_classes
 from .models import AreaOfInterest
 from .serializer import AreaOfInterestSerializer, AreaOfInterestGeoSerializer
 from django.http import HttpResponse, HttpResponseForbidden
@@ -11,11 +12,15 @@ from rest_framework import status, permissions
 from django.shortcuts import get_object_or_404
 from .models import HotspotAlert, AreaOfInterest
 from .serializer import HotspotAlertSerializer, HotspotAlertGeoSerializer
-from datetime import date
+from datetime import date, datetime, timedelta
 from dateutil.parser import parse as dateparse
 import json
 import logging
 logger = logging.getLogger(__name__)
+from django.db.models import Count, Q, Sum
+from django.utils import timezone
+
+
 
 class UserAOIListView(APIView):
     permission_classes = [IsAuthenticated]
@@ -380,3 +385,127 @@ class UserDeforestationTileView(APIView):
             return HttpResponse(tile, content_type="application/x-protobuf")
         return HttpResponse(status=204)
     
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def hotspot_chart_data(request):
+    """API untuk ChartHotspot.tsx - data chart bulanan"""
+    user = request.user
+    
+    # Ambil data 12 bulan terakhir
+    end_date = timezone.now().date()
+    start_date = end_date - timedelta(days=365)
+    
+    # Query hotspot alerts per bulan untuk user
+    monthly_data = []
+    for i in range(12):
+        month_start = end_date.replace(day=1) - timedelta(days=30*i)
+        month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        
+        count = HotspotAlert.objects.filter(
+            area_of_interest__users_aoi=user,
+            alert_date__range=[month_start, month_end]
+        ).count()
+        
+        monthly_data.append({
+            'name': month_start.strftime('%b'),
+            'value': count,
+            'amt': count * 100  # untuk keperluan chart
+        })
+    
+    monthly_data.reverse()  # urutkan dari bulan terlama
+    
+    # Data pie chart berdasarkan kategori
+    pie_data = []
+    categories = ['AMAN', 'PERHATIAN', 'WASPADA', 'BAHAYA']
+    for category in categories:
+        count = HotspotAlert.objects.filter(
+            area_of_interest__users_aoi=user,
+            category=category,
+            alert_date__gte=start_date
+        ).count()
+        pie_data.append({
+            'name': category,
+            'value': count
+        })
+    
+    return Response({
+        'monthly_data': monthly_data,
+        'pie_data': pie_data
+    })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def company_table_data(request):
+    """API untuk CompanyTable.tsx - data tabel perusahaan"""
+    user = request.user
+    
+    # Agregasi jumlah events per AOI/company
+    companies = AreaOfInterest.objects.filter(
+        users_aoi=user
+    ).annotate(
+        events_count=Count('hotspot_alerts')
+    ).order_by('-events_count')[:10]  # top 10
+    
+    company_data = []
+    for company in companies:
+        company_data.append({
+            'name': company.name,
+            'events': company.events_count
+        })
+    
+    return Response(company_data)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def event_list_data(request):
+    """API untuk EventList.tsx - daftar alert terbaru"""
+    user = request.user
+    
+    # Ambil 10 alert terbaru
+    recent_alerts = HotspotAlert.objects.filter(
+        area_of_interest__users_aoi=user
+    ).select_related('area_of_interest', 'hotspot').order_by('-alert_date', '-id')[:10]
+    
+    events_data = []
+    for alert in recent_alerts:
+        events_data.append({
+            'company': alert.area_of_interest.name,
+            'date': alert.alert_date.strftime('%Y-%m-%d'),
+            'time': alert.hotspot.times.strftime('%H:%M') if alert.hotspot.times else '00:00',
+            'distance': f"{alert.distance:.2f}" if alert.distance else "0.00",
+            'satellite': alert.hotspot.sat if alert.hotspot.sat else 'Unknown',
+            'category': alert.get_category_display(),
+            'hotspot_id': alert.hotspot.id,
+            'aoi_id': alert.area_of_interest.id
+        })
+    
+    return Response(events_data)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def hotspot_stats_data(request):
+    """API untuk HotspotStats.tsx - statistik hotspot"""
+    user = request.user
+    
+    # Total kejadian
+    total_events = HotspotAlert.objects.filter(
+        area_of_interest__users_aoi=user
+    ).count()
+    
+    # Total area (jumlah AOI unik yang punya alert)
+    total_areas = AreaOfInterest.objects.filter(
+        users_aoi=user,
+        hotspot_alerts__isnull=False
+    ).distinct().count()
+    
+    # Jumlah PT/AOI yang terlibat
+    total_companies = AreaOfInterest.objects.filter(
+        users_aoi=user
+    ).count()
+    
+    return Response({
+        'total_events': total_events,
+        'total_areas': total_areas,
+        'total_companies': total_companies
+    })
