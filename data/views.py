@@ -392,43 +392,61 @@ def hotspot_chart_data(request):
     """API untuk ChartHotspot.tsx - data chart bulanan"""
     user = request.user
     
-    # Ambil data 12 bulan terakhir
-    end_date = timezone.now().date()
-    start_date = end_date - timedelta(days=365)
+    # Ambil parameter tanggal dari request
+    start_date = request.query_params.get('start_date')
+    end_date = request.query_params.get('end_date')
     
-    # Query hotspot alerts per bulan untuk user
+    # Set default jika tidak ada parameter
+    if not start_date or not end_date:
+        end_date = timezone.now().date()
+        start_date = end_date - timedelta(days=365)
+    else:
+        try:
+            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
+
+    # Query hotspot alerts per bulan untuk user dengan filter tanggal
     monthly_data = []
-    for i in range(12):
-        month_start = end_date.replace(day=1) - timedelta(days=30*i)
+    current_date = start_date
+    while current_date <= end_date:
+        month_start = current_date.replace(day=1)
         month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
-        
+        if month_end > end_date:
+            month_end = end_date
+            
         count = HotspotAlert.objects.filter(
             area_of_interest__users_aoi=user,
             alert_date__range=[month_start, month_end]
         ).count()
         
         monthly_data.append({
-            'name': month_start.strftime('%b'),
+            'name': month_start.strftime('%b %Y'),
             'value': count,
-            'amt': count * 100  # untuk keperluan chart
+            'amt': count * 100
         })
-    
-    monthly_data.reverse()  # urutkan dari bulan terlama
-    
-    # Data pie chart berdasarkan kategori
+        
+        # Move to next month
+        if month_start.month == 12:
+            current_date = month_start.replace(year=month_start.year + 1, month=1)
+        else:
+            current_date = month_start.replace(month=month_start.month + 1)
+
+    # Data pie chart berdasarkan kategori dengan filter tanggal
     pie_data = []
     categories = ['AMAN', 'PERHATIAN', 'WASPADA', 'BAHAYA']
     for category in categories:
         count = HotspotAlert.objects.filter(
             area_of_interest__users_aoi=user,
             category=category,
-            alert_date__gte=start_date
+            alert_date__range=[start_date, end_date]
         ).count()
         pie_data.append({
             'name': category,
             'value': count
         })
-    
+
     return Response({
         'monthly_data': monthly_data,
         'pie_data': pie_data
@@ -437,35 +455,108 @@ def hotspot_chart_data(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def company_table_data(request):
-    """API untuk CompanyTable.tsx - data tabel perusahaan"""
+    """API untuk CompanyTable.tsx - data tabel perusahaan dengan detail kategori"""
     user = request.user
     
-    # Agregasi jumlah events per AOI/company
-    companies = AreaOfInterest.objects.filter(
-        users_aoi=user
-    ).annotate(
-        events_count=Count('hotspot_alerts')
-    ).order_by('-events_count')[:10]  # top 10
+    # Ambil parameter tanggal
+    start_date = request.query_params.get('start_date')
+    end_date = request.query_params.get('end_date')
+    
+    if not start_date or not end_date:
+        end_date = timezone.now().date()
+        start_date = end_date - timedelta(days=365)
+    else:
+        try:
+            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
+
+    # Agregasi jumlah events per AOI/company dengan detail kategori
+    companies = AreaOfInterest.objects.filter(users_aoi=user)
     
     company_data = []
     for company in companies:
-        company_data.append({
-            'name': company.name,
-            'events': company.events_count
-        })
+        # Hitung total events dalam rentang tanggal
+        total_events = HotspotAlert.objects.filter(
+            area_of_interest=company,
+            alert_date__range=[start_date, end_date]
+        ).count()
+        
+        if total_events > 0:  # Hanya tampilkan yang ada events
+            # Hitung per kategori
+            aman = HotspotAlert.objects.filter(
+                area_of_interest=company,
+                category='AMAN',
+                alert_date__range=[start_date, end_date]
+            ).count()
+            
+            perhatian = HotspotAlert.objects.filter(
+                area_of_interest=company,
+                category='PERHATIAN',
+                alert_date__range=[start_date, end_date]
+            ).count()
+            
+            waspada = HotspotAlert.objects.filter(
+                area_of_interest=company,
+                category='WASPADA',
+                alert_date__range=[start_date, end_date]
+            ).count()
+            
+            bahaya = HotspotAlert.objects.filter(
+                area_of_interest=company,
+                category='BAHAYA',
+                alert_date__range=[start_date, end_date]
+            ).count()
+            
+            company_data.append({
+                'name': company.name,
+                'total_events': total_events,
+                'aman': aman,
+                'perhatian': perhatian,
+                'waspada': waspada,
+                'bahaya': bahaya
+            })
     
-    return Response(company_data)
+    # Sort by total events
+    company_data.sort(key=lambda x: x['total_events'], reverse=True)
+    
+    return Response(company_data[:10])  # top 10
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def event_list_data(request):
-    """API untuk EventList.tsx - daftar alert terbaru"""
+    """API untuk EventList.tsx - daftar alert terbaru dengan pagination"""
     user = request.user
     
-    # Ambil 10 alert terbaru
-    recent_alerts = HotspotAlert.objects.filter(
-        area_of_interest__users_aoi=user
-    ).select_related('area_of_interest', 'hotspot').order_by('-alert_date', '-id')[:10]
+    # Ambil parameter tanggal dan pagination
+    start_date = request.query_params.get('start_date')
+    end_date = request.query_params.get('end_date')
+    page = int(request.query_params.get('page', 1))
+    page_size = int(request.query_params.get('page_size', 10))
+    
+    if not start_date or not end_date:
+        end_date = timezone.now().date()
+        start_date = end_date - timedelta(days=30)  # Default 30 hari terakhir
+    else:
+        try:
+            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
+
+    # Query dengan filter tanggal
+    queryset = HotspotAlert.objects.filter(
+        area_of_interest__users_aoi=user,
+        alert_date__range=[start_date, end_date]
+    ).select_related('area_of_interest', 'hotspot').order_by('-alert_date', '-id')
+    
+    # Hitung total dan pagination
+    total_count = queryset.count()
+    start_index = (page - 1) * page_size
+    end_index = start_index + page_size
+    
+    recent_alerts = queryset[start_index:end_index]
     
     events_data = []
     for alert in recent_alerts:
@@ -479,31 +570,56 @@ def event_list_data(request):
             'hotspot_id': alert.hotspot.id,
             'aoi_id': alert.area_of_interest.id
         })
-    
-    return Response(events_data)
+
+    return Response({
+        'data': events_data,
+        'pagination': {
+            'current_page': page,
+            'page_size': page_size,
+            'total_count': total_count,
+            'total_pages': (total_count + page_size - 1) // page_size,
+            'has_next': end_index < total_count,
+            'has_previous': page > 1
+        }
+    })
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def hotspot_stats_data(request):
-    """API untuk HotspotStats.tsx - statistik hotspot"""
+    """API untuk HotspotStats.tsx - statistik hotspot dengan filter tanggal"""
     user = request.user
     
-    # Total kejadian
-    total_events = HotspotAlert.objects.filter(
-        area_of_interest__users_aoi=user
-    ).count()
+    # Ambil parameter tanggal
+    start_date = request.query_params.get('start_date')
+    end_date = request.query_params.get('end_date')
     
-    # Total area (jumlah AOI unik yang punya alert)
+    if not start_date or not end_date:
+        end_date = timezone.now().date()
+        start_date = end_date - timedelta(days=365)
+    else:
+        try:
+            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
+
+    # Total kejadian dengan filter tanggal
+    total_events = HotspotAlert.objects.filter(
+        area_of_interest__users_aoi=user,
+        alert_date__range=[start_date, end_date]
+    ).count()
+
+    # Total area (jumlah AOI unik yang punya alert dalam rentang tanggal)
     total_areas = AreaOfInterest.objects.filter(
         users_aoi=user,
-        hotspot_alerts__isnull=False
+        hotspot_alerts__alert_date__range=[start_date, end_date]
     ).distinct().count()
-    
+
     # Jumlah PT/AOI yang terlibat
     total_companies = AreaOfInterest.objects.filter(
         users_aoi=user
     ).count()
-    
+
     return Response({
         'total_events': total_events,
         'total_areas': total_areas,
