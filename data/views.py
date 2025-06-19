@@ -274,42 +274,44 @@ class UserHotspotAlertTileView(APIView):
                 return HttpResponse("Invalid startdate or enddate format. Use YYYY-MM-DD", status=400)
 
         # SQL utama
-        sql = f"""
-            WITH tile_bounds AS (
-                SELECT ST_TileEnvelope(%s, %s, %s) AS geom
-            ),
-            user_aoi AS (
-                SELECT areaofinterest_id
-                FROM accounts_users_areas_of_interest
-                WHERE users_id = %s
-            ),
-            mvtgeom AS (
-                SELECT
-                    alerts.id,
-                    alerts.alert_date,
-                    alerts.category,
-                    COALESCE(alerts.confidence, 0) AS confidence,
-                    alerts.distance,
-                    alerts.area_of_interest_id,
-                    alerts.hotspot_id,
-                    ST_AsMVTGeom(
-                        ST_Transform(h.geom::geometry, 3857),
-                        tile_bounds.geom,
-                        4096,
-                        64,
-                        true
-                    ) AS geom
-                FROM data_hotspotalert alerts
-                JOIN user_aoi ON alerts.area_of_interest_id = user_aoi.areaofinterest_id
-                JOIN data_hotspots h ON alerts.hotspot_id = h.id
-                CROSS JOIN tile_bounds
-                WHERE h.geom IS NOT NULL
-                AND ST_Intersects(ST_Transform(h.geom::geometry, 3857), tile_bounds.geom)
-                AND ST_IsValid(h.geom::geometry)
-                {time_filter_sql}
-            )
-            SELECT ST_AsMVT(mvtgeom.*, 'hotspot_alerts', 4096, 'geom') FROM mvtgeom;
-        """
+        sql =  f"""
+                    WITH tile_bounds AS (
+                        SELECT ST_TileEnvelope(%s, %s, %s) AS geom
+                    ),
+                    user_aoi AS (
+                        SELECT areaofinterest_id
+                        FROM accounts_users_areas_of_interest
+                        WHERE users_id = %s
+                    ),
+                    mvtgeom AS (
+                        SELECT
+                            alerts.id,
+                            alerts.alert_date,
+                            alerts.category,
+                            COALESCE(alerts.confidence, 0) AS confidence,
+                            alerts.distance,
+                            alerts.hotspot_id,
+                            aois.name AS area_of_interest_name,
+                            ST_AsMVTGeom(
+                                ST_Transform(h.geom::geometry, 3857),
+                                tile_bounds.geom,
+                                4096,
+                                64,
+                                true
+                            ) AS geom
+                        FROM data_hotspotalert alerts
+                        JOIN user_aoi ON alerts.area_of_interest_id = user_aoi.areaofinterest_id
+                        JOIN data_hotspots h ON alerts.hotspot_id = h.id
+                        JOIN data_areaofinterest aois ON alerts.area_of_interest_id = aois.id
+                        CROSS JOIN tile_bounds
+                        WHERE h.geom IS NOT NULL
+                        AND ST_Intersects(ST_Transform(h.geom::geometry, 3857), tile_bounds.geom)
+                        AND ST_IsValid(h.geom::geometry)
+                        {time_filter_sql}
+                    )
+                    SELECT ST_AsMVT(mvtgeom.*, 'hotspot_alerts', 4096, 'geom') FROM mvtgeom;
+                """
+
 
         with connection.cursor() as cursor:
             cursor.execute(sql, [z, x, y, str(user_id)] + time_filter_params)
