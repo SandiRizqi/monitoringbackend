@@ -25,13 +25,17 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 # Salin seluruh kode ke container
 COPY . .
 
+# Buat direktori logs
+RUN mkdir -p /app/logs
+
 # Expose port
 EXPOSE 8000
 
 # Jalankan collectstatic tanpa interaktif
 RUN python manage.py collectstatic --noinput
 
+# Copy app.py
+COPY app.py .
 
-# Perintah default
-CMD ["gunicorn", "monitoringbackend.wsgi:application", "--bind", "0.0.0.0:8000"]
-
+# Perintah default - jalankan Django dan notification service
+CMD ["sh", "-c", "python app.py & gunicorn monitoringbackend.wsgi:application --bind 0.0.0.0:8000"]
