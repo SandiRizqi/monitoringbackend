@@ -19,6 +19,7 @@ django.setup()
 
 from django.conf import settings
 from data.models import HotspotAlert, DeforestationAlerts, AreaOfInterest, Hotspots
+from accounts.models import Users
 
 # Setup logging
 logging.basicConfig(
@@ -48,26 +49,44 @@ class HotspotNotificationService:
             'email_user': os.getenv('EMAIL_USER', ''),
             'email_password': os.getenv('EMAIL_PASSWORD', ''),
             'from_email': os.getenv('FROM_EMAIL', ''),
-            'to_emails': [email.strip() for email in os.getenv('TO_EMAILS', '').split(',') if email.strip()]
         }
         
-        # Tracking untuk mencegah duplicate notifications
-        self.last_hotspot_id = self.get_last_hotspot_id()
-        self.last_deforestation_id = self.get_last_deforestation_id()
+        # Tracking untuk mencegah duplicate notifications per user
+        self.user_last_hotspot_id = {}
+        self.user_last_deforestation_id = {}
         self.connection = None
         
-        # TAMBAHAN: Queue untuk real-time notifications
+        # Queue untuk real-time notifications
         self.notification_queue = Queue()
         self.running = False
         
-        # TAMBAHAN: Tracking untuk real-time monitoring
-        self.last_hotspot_count = self.get_current_hotspot_count()
-        self.last_deforestation_count = self.get_current_deforestation_count()
+        # Initialize tracking untuk setiap user
+        self.initialize_user_tracking()
         
-        logger.info(f"Service initialized - Last Hotspot ID: {self.last_hotspot_id}, Last Deforestation ID: {self.last_deforestation_id}")
-        logger.info(f"Current counts - Hotspot: {self.last_hotspot_count}, Deforestation: {self.last_deforestation_count}")
-        
-        
+        logger.info("Service initialized with per-user tracking")
+
+    def initialize_user_tracking(self):
+        """Initialize tracking untuk setiap user berdasarkan AOI mereka"""
+        try:
+            users = Users.objects.all()
+            for user in users:
+                # Get last hotspot alert ID untuk user ini
+                last_hotspot = HotspotAlert.objects.filter(
+                    area_of_interest__users_aoi=user
+                ).order_by('-id').first()
+                self.user_last_hotspot_id[user.id] = last_hotspot.id if last_hotspot else 0
+                
+                # Get last deforestation alert ID untuk user ini
+                last_deforestation = DeforestationAlerts.objects.filter(
+                    company__users_aoi=user
+                ).order_by('-id').first()
+                self.user_last_deforestation_id[user.id] = last_deforestation.id if last_deforestation else ""
+                
+                logger.info(f"User {user.email} - Last Hotspot ID: {self.user_last_hotspot_id[user.id]}, Last Deforestation ID: {self.user_last_deforestation_id[user.id]}")
+                
+        except Exception as e:
+            logger.error(f"Error initializing user tracking: {str(e)}")
+
     def connect_database(self):
         """Membuat koneksi ke PostgreSQL database"""
         try:
@@ -78,701 +97,514 @@ class HotspotNotificationService:
             logger.error(f"Database connection failed: {str(e)}")
             return False
 
-    def get_last_hotspot_id(self) -> int:
-        """Mendapatkan ID terakhir dari HotspotAlert untuk tracking"""
+    def get_users_with_aoi(self) -> List[Users]:
+        """Mendapatkan semua user yang memiliki AOI"""
         try:
-            from data.models import HotspotAlert
-            last_alert = HotspotAlert.objects.order_by('-id').first()
-            return last_alert.id if last_alert else 0
+            return Users.objects.filter(areas_of_interest__isnull=False).distinct()
         except Exception as e:
-            logger.error(f"Error getting last hotspot ID: {str(e)}")
-            return 0
+            logger.error(f"Error getting users with AOI: {str(e)}")
+            return []
 
-    def get_last_deforestation_id(self) -> str:
-        """Mendapatkan ID terakhir dari DeforestationAlerts untuk tracking"""
+    def check_new_hotspot_alerts_for_user(self, user: Users) -> List[Tuple]:
+        """Mengecek HotspotAlert baru untuk user tertentu berdasarkan AOI mereka"""
+        if not self.connection:
+            if not self.connect_database():
+                return []
+
         try:
-            from data.models import DeforestationAlerts
-            last_alert = DeforestationAlerts.objects.order_by('-id').first()
-            return last_alert.id if last_alert else ""
+            cursor = self.connection.cursor()
+            last_id = self.user_last_hotspot_id.get(user.id, 0)
+            
+            # Query berdasarkan AOI milik user dan ID yang lebih besar dari last check
+            query = """
+            SELECT 
+                ha.id,
+                ha.alert_date,
+                ha.category,
+                ha.confidence,
+                ha.distance,
+                ha.description,
+                aoi.name as area_name,
+                COALESCE(aoi.description, aoi.name) as area_description,
+                h.lat as latitude,
+                h.long as longitude,
+                h.radius as brightness,
+                h.date as scan_date,
+                h.sat as satellite,
+                h.conf as hotspot_confidence,
+                'hotspot' as alert_type,
+                %s as user_id,
+                %s as user_email
+            FROM data_hotspotalert ha
+            JOIN data_areaofinterest aoi ON ha.area_of_interest_id = aoi.id
+            JOIN accounts_users_areas_of_interest uaoi ON aoi.id = uaoi.areaofinterest_id
+            JOIN data_hotspots h ON ha.hotspot_id = h.id
+            WHERE uaoi.users_id = %s 
+            AND ha.id > %s
+            ORDER BY ha.id ASC
+            """
+            
+            cursor.execute(query, (user.id, user.email, user.id, last_id))
+            new_alerts = cursor.fetchall()
+            
+            logger.debug(f"User {user.email} - Checking hotspot alerts with ID > {last_id}")
+            logger.debug(f"User {user.email} - Found {len(new_alerts)} new hotspot alerts")
+            
+            cursor.close()
+            return new_alerts
+            
         except Exception as e:
-            logger.error(f"Error getting last deforestation ID: {str(e)}")
-            return ""
-    
-    # TAMBAHAN: Method untuk mendapatkan count saat ini
-    def get_current_hotspot_count(self) -> int:
-        """Mendapatkan jumlah total HotspotAlert saat ini"""
+            logger.error(f"Error checking new hotspot alerts for user {user.email}: {str(e)}")
+            self.connection = None
+            return []
+
+    def check_new_deforestation_alerts_for_user(self, user: Users) -> List[Tuple]:
+        """Mengecek DeforestationAlerts baru untuk user tertentu berdasarkan AOI mereka"""
+        if not self.connection:
+            if not self.connect_database():
+                return []
+
         try:
-            from data.models import HotspotAlert
-            return HotspotAlert.objects.count()
+            cursor = self.connection.cursor()
+            last_id = self.user_last_deforestation_id.get(user.id, "")
+            
+            # Query berdasarkan AOI milik user dan ID yang lebih besar dari last check
+            query = """
+            SELECT 
+                da.id,
+                da.event_id,
+                da.alert_date,
+                da.created,
+                da.confidence,
+                da.area,
+                aoi.name as area_name,
+                COALESCE(aoi.description, aoi.name) as area_description,
+                ST_AsText(ST_Centroid(da.geom)) as center_point,
+                'deforestation' as alert_type,
+                %s as user_id,
+                %s as user_email
+            FROM data_deforestationalerts da
+            JOIN data_areaofinterest aoi ON da.company_id = aoi.id
+            JOIN accounts_users_areas_of_interest uaoi ON aoi.id = uaoi.areaofinterest_id
+            WHERE uaoi.users_id = %s 
+            AND da.id > %s
+            ORDER BY da.id ASC
+            """
+            
+            cursor.execute(query, (user.id, user.email, user.id, last_id))
+            new_alerts = cursor.fetchall()
+            
+            logger.debug(f"User {user.email} - Checking deforestation alerts with ID > {last_id}")
+            logger.debug(f"User {user.email} - Found {len(new_alerts)} new deforestation alerts")
+            
+            cursor.close()
+            return new_alerts
+            
         except Exception as e:
-            logger.error(f"Error getting hotspot count: {str(e)}")
-            return 0
-    
-    def get_current_deforestation_count(self) -> int:
-        """Mendapatkan jumlah total DeforestationAlerts saat ini"""
-        try:
-            from data.models import DeforestationAlerts
-            return DeforestationAlerts.objects.count()
-        except Exception as e:
-            logger.error(f"Error getting deforestation count: {str(e)}")
-            return 0
-    
-    # TAMBAHAN: Method untuk detect perubahan data
-    def detect_data_changes(self) -> Dict[str, Any]:
-        """Detect perubahan data dengan membandingkan count"""
-        changes = {
-            'hotspot_new': 0,
-            'deforestation_new': 0,
-            'has_changes': False
-        }
+            logger.error(f"Error checking new deforestation alerts for user {user.email}: {str(e)}")
+            self.connection = None
+            return []
+
+    def update_user_last_ids(self, user: Users, hotspot_alerts: List[Tuple], deforestation_alerts: List[Tuple]):
+        """Update last IDs untuk user tertentu setelah notifikasi berhasil dikirim"""
+        if hotspot_alerts:
+            latest_hotspot_id = max([alert[0] for alert in hotspot_alerts])
+            self.user_last_hotspot_id[user.id] = latest_hotspot_id
+            logger.info(f"User {user.email} - Updated last hotspot ID to: {latest_hotspot_id}")
         
+        if deforestation_alerts:
+            latest_deforestation_id = max([alert[0] for alert in deforestation_alerts])
+            self.user_last_deforestation_id[user.id] = latest_deforestation_id
+            logger.info(f"User {user.email} - Updated last deforestation ID to: {latest_deforestation_id}")
+
+    def send_hotspot_email_notification(self, user: Users, alerts: List[Tuple]) -> bool:
+        """Kirim email notifikasi khusus untuk hotspot alerts"""
         try:
-            # Check hotspot changes
-            current_hotspot_count = self.get_current_hotspot_count()
-            if current_hotspot_count > self.last_hotspot_count:
-                changes['hotspot_new'] = current_hotspot_count - self.last_hotspot_count
-                changes['has_changes'] = True
-                logger.info(f"Detected {changes['hotspot_new']} new hotspot alerts")
-            
-            # Check deforestation changes
-            current_deforestation_count = self.get_current_deforestation_count()
-            if current_deforestation_count > self.last_deforestation_count:
-                changes['deforestation_new'] = current_deforestation_count - self.last_deforestation_count
-                changes['has_changes'] = True
-                logger.info(f"Detected {changes['deforestation_new']} new deforestation alerts")
-            
-            # Update counts jika ada perubahan
-            if changes['has_changes']:
-                self.last_hotspot_count = current_hotspot_count
-                self.last_deforestation_count = current_deforestation_count
-            
-            return changes
-            
-        except Exception as e:
-            logger.error(f"Error detecting data changes: {str(e)}")
-            return changes
-    
-    # TAMBAHAN: Method untuk real-time monitoring
-    def real_time_monitor(self, check_interval: int = 30):
-        """Monitor real-time untuk perubahan data"""
-        logger.info(f"Starting real-time monitor with {check_interval}s interval")
-        
-        while self.running:
-            try:
-                changes = self.detect_data_changes()
-                
-                if changes['has_changes']:
-                    # Queue notification untuk processing
-                    self.notification_queue.put({
-                        'type': 'real_time',
-                        'timestamp': datetime.now(),
-                        'changes': changes
-                    })
-                    
-                    logger.info(f"Queued real-time notification: {changes}")
-                
-                time.sleep(check_interval)
-                
-            except Exception as e:
-                logger.error(f"Error in real-time monitor: {str(e)}")
-                time.sleep(check_interval)
-    
-    # TAMBAHAN: Method untuk process notification queue
-    def process_notification_queue(self):
-        """Process notifications dari queue"""
-        logger.info("Starting notification queue processor")
-        
-        while self.running:
-            try:
-                if not self.notification_queue.empty():
-                    notification = self.notification_queue.get(timeout=1)
-                    
-                    if notification['type'] == 'real_time':
-                        self.send_real_time_notification(notification)
-                    
-                    self.notification_queue.task_done()
-                else:
-                    time.sleep(1)
-                    
-            except Exception as e:
-                if "Empty" not in str(e):  # Ignore empty queue timeout
-                    logger.error(f"Error processing notification queue: {str(e)}")
-                time.sleep(1)
-    
-    # TAMBAHAN: Method untuk kirim real-time notification
-    def send_real_time_notification(self, notification):
-        """Kirim email untuk real-time notification"""
-        try:
-            changes = notification['changes']
-            timestamp = notification['timestamp']
-            
-            if not self.email_config['email_user'] or not self.email_config['to_emails']:
-                logger.warning("Email configuration not complete, skipping real-time notification")
+            if not self.email_config['email_user'] or not user.email:
+                logger.warning(f"Email configuration incomplete for user {user.email}")
                 return False
-            
-            # Ambil data terbaru untuk detail
-            hotspot_alerts = []
-            deforestation_alerts = []
-            
-            if changes['hotspot_new'] > 0:
-                hotspot_alerts = self.get_latest_hotspot_alerts(changes['hotspot_new'])
-            
-            if changes['deforestation_new'] > 0:
-                deforestation_alerts = self.get_latest_deforestation_alerts(changes['deforestation_new'])
-            
-            # Setup email
+
+            # Setup email dengan subject khusus hotspot
             msg = MIMEMultipart('alternative')
-            total_new = changes['hotspot_new'] + changes['deforestation_new']
+            high_priority_count = len([alert for alert in alerts if alert[2] in ['BAHAYA', 'WASPADA']])
             
-            msg['Subject'] = f"🚨 REAL-TIME ALERT - {total_new} New Alert(s) Detected"
+            msg['Subject'] = f"🔥 HOTSPOT ALERT - {len(alerts)} Titik Panas Terdeteksi di Area Anda"
+            if high_priority_count > 0:
+                msg['Subject'] = f"🚨 URGENT HOTSPOT ALERT - {high_priority_count} Titik Panas Prioritas Tinggi!"
+                
             msg['From'] = self.email_config['from_email'] or self.email_config['email_user']
-            msg['To'] = ', '.join(self.email_config['to_emails'])
-            
-            # Create HTML content
-            html_content = self.format_real_time_email(hotspot_alerts, deforestation_alerts, timestamp)
+            msg['To'] = user.email
+
+            # Create HTML content khusus hotspot
+            html_content = self.format_hotspot_email(user, alerts)
             html_part = MIMEText(html_content, 'html')
             msg.attach(html_part)
-            
+
             # Send email
             server = smtplib.SMTP(self.email_config['smtp_server'], self.email_config['smtp_port'])
             server.starttls()
             server.login(self.email_config['email_user'], self.email_config['email_password'])
-            
-            for to_email in self.email_config['to_emails']:
-                if to_email.strip():
-                    server.send_message(msg, to_addrs=[to_email.strip()])
-            
+            server.send_message(msg, to_addrs=[user.email])
             server.quit()
-            logger.info(f"Real-time email notification sent successfully")
-            
+
+            logger.info(f"Hotspot email notification sent to {user.email}")
             return True
-            
+
         except Exception as e:
-            logger.error(f"Failed to send real-time email notification: {str(e)}")
+            logger.error(f"Failed to send hotspot email to {user.email}: {str(e)}")
             return False
-    
-    # TAMBAHAN: Method untuk ambil data terbaru
-    def get_latest_hotspot_alerts(self, count: int) -> List[Tuple]:
-        """Ambil hotspot alerts terbaru"""
+
+    def send_deforestation_email_notification(self, user: Users, alerts: List[Tuple]) -> bool:
+        """Kirim email notifikasi khusus untuk deforestation alerts"""
         try:
-            if not self.connection:
-                if not self.connect_database():
-                    return []
+            if not self.email_config['email_user'] or not user.email:
+                logger.warning(f"Email configuration incomplete for user {user.email}")
+                return False
+
+            # Setup email dengan subject khusus deforestation
+            msg = MIMEMultipart('alternative')
+            total_area = sum([float(alert[5]) for alert in alerts if alert[5]])
+            high_confidence_count = len([alert for alert in alerts if alert[4] and alert[4] >= 5])
             
-            cursor = self.connection.cursor()
-            
-            query = """
-                SELECT 
-                    ha.id, ha.alert_date, ha.category, ha.confidence, ha.distance, ha.description,
-                    aoi.name as area_name, COALESCE(aoi.description, aoi.name) as area_description,
-                    h.lat as latitude, h.long as longitude, h.radius as brightness,
-                    h.date as scan_date, h.sat as satellite, h.conf as hotspot_confidence,
-                    'hotspot' as alert_type
-                FROM data_hotspotalert ha
-                JOIN data_areaofinterest aoi ON ha.area_of_interest_id = aoi.id
-                JOIN data_hotspots h ON ha.hotspot_id = h.id
-                ORDER BY ha.id DESC
-                LIMIT %s
-            """
-            
-            cursor.execute(query, (count,))
-            alerts = cursor.fetchall()
-            cursor.close()
-            
-            return alerts
-            
+            msg['Subject'] = f"🌳 DEFORESTATION ALERT - {len(alerts)} Deforestasi Terdeteksi ({total_area:.2f} ha)"
+            if high_confidence_count > 0:
+                msg['Subject'] = f"⚠️ CRITICAL DEFORESTATION - {high_confidence_count} Deforestasi Confidence Tinggi!"
+                
+            msg['From'] = self.email_config['from_email'] or self.email_config['email_user']
+            msg['To'] = user.email
+
+            # Create HTML content khusus deforestation
+            html_content = self.format_deforestation_email(user, alerts)
+            html_part = MIMEText(html_content, 'html')
+            msg.attach(html_part)
+
+            # Send email
+            server = smtplib.SMTP(self.email_config['smtp_server'], self.email_config['smtp_port'])
+            server.starttls()
+            server.login(self.email_config['email_user'], self.email_config['email_password'])
+            server.send_message(msg, to_addrs=[user.email])
+            server.quit()
+
+            logger.info(f"Deforestation email notification sent to {user.email}")
+            return True
+
         except Exception as e:
-            logger.error(f"Error getting latest hotspot alerts: {str(e)}")
-            return []
-    
-    def get_latest_deforestation_alerts(self, count: int) -> List[Tuple]:
-        """Ambil deforestation alerts terbaru"""
-        try:
-            if not self.connection:
-                if not self.connect_database():
-                    return []
-            
-            cursor = self.connection.cursor()
-            
-            query = """
-                SELECT 
-                    da.id, da.event_id, da.alert_date, da.created, da.confidence, da.area,
-                    aoi.name as area_name, COALESCE(aoi.description, aoi.name) as area_description,
-                    ST_AsText(ST_Centroid(da.geom)) as center_point, 'deforestation' as alert_type
-                FROM data_deforestationalerts da
-                JOIN data_areaofinterest aoi ON da.company_id = aoi.id
-                ORDER BY da.id DESC
-                LIMIT %s
-            """
-            
-            cursor.execute(query, (count,))
-            alerts = cursor.fetchall()
-            cursor.close()
-            
-            return alerts
-            
-        except Exception as e:
-            logger.error(f"Error getting latest deforestation alerts: {str(e)}")
-            return []
-    
-    # TAMBAHAN: Format email untuk real-time notification
-    def format_real_time_email(self, hotspot_alerts: List[Tuple], deforestation_alerts: List[Tuple], timestamp: datetime) -> str:
-        """Format email untuk real-time notification"""
-        total_alerts = len(hotspot_alerts) + len(deforestation_alerts)
+            logger.error(f"Failed to send deforestation email to {user.email}: {str(e)}")
+            return False
+
+    def format_hotspot_email(self, user: Users, alerts: List[Tuple]) -> str:
+        """Format email khusus untuk hotspot alerts"""
+        high_priority_count = len([alert for alert in alerts if alert[2] in ['BAHAYA', 'WASPADA']])
         
         html_content = f"""
+        <!DOCTYPE html>
         <html>
         <head>
             <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; }}
-                table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
-                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-                th {{ background-color: #f2f2f2; font-weight: bold; }}
-                .header {{ color: #d9534f; }}
-                .summary {{ background-color: #fff3cd; padding: 15px; border-radius: 5px; margin-bottom: 20px; border-left: 4px solid #ffc107; }}
-                .real-time {{ color: #d9534f; font-weight: bold; }}
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                .header {{ background-color: #ff4444; color: white; padding: 15px; border-radius: 5px; }}
+                .content {{ margin: 20px 0; }}
+                .alert-table {{ width: 100%; border-collapse: collapse; margin: 15px 0; }}
+                .alert-table th, .alert-table td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                .alert-table th {{ background-color: #f2f2f2; }}
+                .priority-high {{ background-color: #ffebee; }}
+                .priority-medium {{ background-color: #fff3e0; }}
+                .priority-low {{ background-color: #e8f5e8; }}
+                .footer {{ margin-top: 30px; font-size: 12px; color: #666; }}
             </style>
         </head>
         <body>
-            <h2 class="header">🚨 REAL-TIME Environmental Alert</h2>
-            
-            <div class="summary">
-                <h3 class="real-time">⚡ IMMEDIATE NOTIFICATION</h3>
-                <p><strong>Detection Time:</strong> {timestamp.strftime('%Y-%m-%d %H:%M:%S WIB')}</p>
-                <p><strong>Total New Alerts:</strong> {total_alerts}</p>
-                <p><strong>New Hotspot Alerts:</strong> {len(hotspot_alerts)}</p>
-                <p><strong>New Deforestation Alerts:</strong> {len(deforestation_alerts)}</p>
-                <p class="real-time">⚠️ This is a real-time notification triggered by new data entry!</p>
+            <div class="header">
+                <h2>🔥 HOTSPOT ALERT - Area Monitoring System</h2>
+                <p>Halo {user.name or user.email},</p>
+                <p><strong>{len(alerts)} titik panas baru</strong> terdeteksi di area yang Anda monitor!</p>
+                {f'<p style="color: #ffff00;"><strong>⚠️ {high_priority_count} alert memerlukan perhatian segera!</strong></p>' if high_priority_count > 0 else ''}
             </div>
+            
+            <div class="content">
+                <h3>Detail Hotspot Alerts:</h3>
+                <table class="alert-table">
+                    <thead>
+                        <tr>
+                            <th>Area</th>
+                            <th>Kategori</th>
+                            <th>Lokasi</th>
+                            <th>Jarak (m)</th>
+                            <th>Confidence</th>
+                            <th>Satelit</th>
+                            <th>Tanggal</th>
+                        </tr>
+                    </thead>
+                    <tbody>
         """
         
-        # Add hotspot alerts section
-        if hotspot_alerts:
-            html_content += self.format_hotspot_alerts_email(hotspot_alerts)
+        for alert in alerts:
+            id_val, alert_date, category, confidence, distance, description, area_name, area_description, lat, lng, brightness, scan_date, satellite, hotspot_confidence, alert_type, user_id, user_email = alert
+            
+            location = f"{lat:.4f}, {lng:.4f}" if lat and lng else "N/A"
+            distance_str = f"{distance:.2f}" if distance else "N/A"
+            confidence_display = f"{confidence}" if confidence else f"{hotspot_confidence}" if hotspot_confidence else "N/A"
+            
+            # Tentukan class CSS berdasarkan kategori
+            row_class = ""
+            if category in ['BAHAYA']:
+                row_class = "priority-high"
+            elif category in ['WASPADA']:
+                row_class = "priority-medium"
+            else:
+                row_class = "priority-low"
+            
+            html_content += f"""
+                        <tr class="{row_class}">
+                            <td>{area_name}</td>
+                            <td><strong>{category}</strong></td>
+                            <td>{location}</td>
+                            <td>{distance_str}</td>
+                            <td>{confidence_display}</td>
+                            <td>{satellite or 'N/A'}</td>
+                            <td>{alert_date}</td>
+                        </tr>
+            """
         
-        # Add deforestation alerts section
-        if deforestation_alerts:
-            html_content += self.format_deforestation_alerts_email(deforestation_alerts)
-        
-        html_content += """
-            <hr>
-            <p><em>This is an automated REAL-TIME notification from Environmental Monitoring System.</em></p>
-            <p><strong>Action Required:</strong> Please check the dashboard immediately and take appropriate action.</p>
-            <p><strong>Dashboard:</strong> <a href="http://your-frontend-url.com">Monitoring Dashboard</a></p>
+        html_content += f"""
+                    </tbody>
+                </table>
+                
+                <div style="margin: 20px 0; padding: 15px; background-color: #f9f9f9; border-radius: 5px;">
+                    <h4>📊 Ringkasan Alert:</h4>
+                    <ul>
+                        <li><strong>Total Alert:</strong> {len(alerts)}</li>
+                        <li><strong>Prioritas Tinggi (Bahaya/Waspada):</strong> {high_priority_count}</li>
+                        <li><strong>Waktu Deteksi:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S WIB')}</li>
+                    </ul>
+                </div>
+                
+                <div style="margin: 20px 0; padding: 15px; background-color: #e3f2fd; border-radius: 5px;">
+                    <h4>🎯 Tindakan yang Disarankan:</h4>
+                    <ul>
+                        <li>Segera cek dashboard monitoring untuk detail lokasi</li>
+                        <li>Koordinasi dengan tim lapangan untuk verifikasi</li>
+                        <li>Siapkan tindakan pencegahan jika diperlukan</li>
+                        {f'<li style="color: #d32f2f;"><strong>URGENT: {high_priority_count} lokasi memerlukan tindakan segera!</strong></li>' if high_priority_count > 0 else ''}
+                    </ul>
+                </div>
+            </div>
+            
+            <div class="footer">
+                <p><em>Email ini dikirim secara otomatis oleh Environmental Monitoring System.</em></p>
+                <p><strong>Timestamp:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S WIB')}</p>
+            </div>
         </body>
         </html>
         """
         
         return html_content
 
-    def check_new_hotspot_alerts(self) -> List[Tuple]:
-        """Mengecek HotspotAlert baru berdasarkan ID yang lebih besar dari last_hotspot_id"""
-        if not self.connection:
-            if not self.connect_database():
-                return []
-
-        try:
-            cursor = self.connection.cursor()
-
-            # Query berdasarkan ID yang lebih besar dari last check
-            query = """
-                SELECT 
-                    ha.id,
-                    ha.alert_date,
-                    ha.category,
-                    ha.confidence,
-                    ha.distance,
-                    ha.description,
-                    aoi.name as area_name,
-                    COALESCE(aoi.description, aoi.name) as area_description,
-                    h.lat as latitude,
-                    h.long as longitude,
-                    h.radius as brightness,
-                    h.date as scan_date,
-                    h.sat as satellite,
-                    h.conf as hotspot_confidence,
-                    'hotspot' as alert_type
-                FROM data_hotspotalert ha
-                JOIN data_areaofinterest aoi ON ha.area_of_interest_id = aoi.id
-                JOIN data_hotspots h ON ha.hotspot_id = h.id
-                WHERE ha.id > %s
-                ORDER BY ha.id ASC
-            """
-
-            cursor.execute(query, (self.last_hotspot_id,))
-            new_alerts = cursor.fetchall()
-
-            logger.debug(f"Checking hotspot alerts with ID > {self.last_hotspot_id}")
-            logger.debug(f"Found {len(new_alerts)} new hotspot alerts")
-
-            cursor.close()
-            return new_alerts
-
-        except Exception as e:
-            logger.error(f"Error checking new hotspot alerts: {str(e)}")
-            self.connection = None
-            return []
-
-    def check_new_deforestation_alerts(self) -> List[Tuple]:
-        """Mengecek DeforestationAlerts baru berdasarkan ID yang lebih besar dari last_deforestation_id"""
-        if not self.connection:
-            if not self.connect_database():
-                return []
-
-        try:
-            cursor = self.connection.cursor()
-
-            # Query berdasarkan ID yang lebih besar dari last check
-            query = """
-                SELECT 
-                    da.id,
-                    da.event_id,
-                    da.alert_date,
-                    da.created,
-                    da.confidence,
-                    da.area,
-                    aoi.name as area_name,
-                    COALESCE(aoi.description, aoi.name) as area_description,
-                    ST_AsText(ST_Centroid(da.geom)) as center_point,
-                    'deforestation' as alert_type
-                FROM data_deforestationalerts da
-                JOIN data_areaofinterest aoi ON da.company_id = aoi.id
-                WHERE da.id > %s
-                ORDER BY da.id ASC
-            """
-
-            cursor.execute(query, (self.last_deforestation_id,))
-            new_alerts = cursor.fetchall()
-
-            logger.debug(f"Checking deforestation alerts with ID > {self.last_deforestation_id}")
-            logger.debug(f"Found {len(new_alerts)} new deforestation alerts")
-
-            cursor.close()
-            return new_alerts
-
-        except Exception as e:
-            logger.error(f"Error checking new deforestation alerts: {str(e)}")
-            self.connection = None
-            return []
-
-    def update_last_ids(self, hotspot_alerts: List[Tuple], deforestation_alerts: List[Tuple]):
-        """Update last IDs setelah notifikasi berhasil dikirim"""
-        if hotspot_alerts:
-            # ID ada di index 0
-            latest_hotspot_id = max([alert[0] for alert in hotspot_alerts])
-            self.last_hotspot_id = latest_hotspot_id
-            logger.info(f"Updated last hotspot ID to: {self.last_hotspot_id}")
-
-        if deforestation_alerts:
-            # ID ada di index 0
-            latest_deforestation_id = max([alert[0] for alert in deforestation_alerts])
-            self.last_deforestation_id = latest_deforestation_id
-            logger.info(f"Updated last deforestation ID to: {self.last_deforestation_id}")
-
-    def format_hotspot_alerts_email(self, alerts: List[Tuple]) -> str:
-        """Format HotspotAlert data untuk email notification"""
-        if not alerts:
-            return ""
-
+    def format_deforestation_email(self, user: Users, alerts: List[Tuple]) -> str:
+        """Format email khusus untuk deforestation alerts"""
+        total_area = sum([float(alert[5]) for alert in alerts if alert[5]])
+        high_confidence_count = len([alert for alert in alerts if alert[4] and alert[4] >= 5])
+        
         html_content = f"""
-        <h3 style="color: #d9534f;">🔥 Hotspot Alerts ({len(alerts)} new)</h3>
-        <table style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
-            <tr style="background-color: #f2f2f2;">
-                <th style="border: 1px solid #ddd; padding: 8px;">ID</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Area</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Category</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Location</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Distance (m)</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Confidence</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Satellite</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Date</th>
-            </tr>
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                .header {{ background-color: #2e7d32; color: white; padding: 15px; border-radius: 5px; }}
+                .content {{ margin: 20px 0; }}
+                .alert-table {{ width: 100%; border-collapse: collapse; margin: 15px 0; }}
+                .alert-table th, .alert-table td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                .alert-table th {{ background-color: #f2f2f2; }}
+                .confidence-high {{ background-color: #ffebee; }}
+                .confidence-medium {{ background-color: #fff3e0; }}
+                .confidence-low {{ background-color: #e8f5e8; }}
+                .footer {{ margin-top: 30px; font-size: 12px; color: #666; }}
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h2>🌳 DEFORESTATION ALERT - Area Monitoring System</h2>
+                <p>Halo {user.name or user.email},</p>
+                <p><strong>{len(alerts)} deforestasi baru</strong> terdeteksi di area yang Anda monitor!</p>
+                <p><strong>Total Area Terdeforestasi: {total_area:.2f} hektar</strong></p>
+                {f'<p style="color: #ffff00;"><strong>⚠️ {high_confidence_count} alert dengan confidence tinggi!</strong></p>' if high_confidence_count > 0 else ''}
+            </div>
+            
+            <div class="content">
+                <h3>Detail Deforestation Alerts:</h3>
+                <table class="alert-table">
+                    <thead>
+                        <tr>
+                            <th>Event ID</th>
+                            <th>Area</th>
+                            <th>Luas (ha)</th>
+                            <th>Confidence</th>
+                            <th>Tanggal Alert</th>
+                            <th>Koordinat Pusat</th>
+                        </tr>
+                    </thead>
+                    <tbody>
         """
-
+        
         for alert in alerts:
-            (id_val, alert_date, category, confidence, distance, description, 
-             area_name, area_description, lat, lon, brightness, scan_date, satellite, hotspot_conf, alert_type) = alert
-
-            location = f"{lat:.4f}, {lon:.4f}" if lat and lon else "N/A"
-
-            # Color coding berdasarkan kategori
-            if category == "BAHAYA":
-                category_color = "#d9534f"  # Red
-            elif category == "WASPADA":
-                category_color = "#f0ad4e"  # Orange
-            elif category == "PERHATIAN":
-                category_color = "#337ab7"  # Blue
-            else:
-                category_color = "#5cb85c"  # Green (AMAN)
-
-            distance_str = f"{distance:.0f}" if distance else "N/A"
-            confidence_display = confidence if confidence else hotspot_conf
-
-            html_content += f"""
-                <tr>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{id_val}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{area_name}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px; color: {category_color}; font-weight: bold;">{category}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{location}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{distance_str}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{confidence_display}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{satellite}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{alert_date}</td>
-                </tr>
-            """
-
-        html_content += "</table>"
-        return html_content
-
-    def format_deforestation_alerts_email(self, alerts: List[Tuple]) -> str:
-        """Format DeforestationAlerts data untuk email notification"""
-        if not alerts:
-            return ""
-
-        html_content = f"""
-        <h3 style="color: #5cb85c;">🌳 Deforestation Alerts ({len(alerts)} new)</h3>
-        <table style="border-collapse: collapse; width: 100%; margin-bottom: 20px;">
-            <tr style="background-color: #f2f2f2;">
-                <th style="border: 1px solid #ddd; padding: 8px;">ID</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Event ID</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Area</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Area (ha)</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Confidence</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Alert Date</th>
-                <th style="border: 1px solid #ddd; padding: 8px;">Center Point</th>
-            </tr>
-        """
-
-        for alert in alerts:
-            (id_val, event_id, alert_date, created, confidence, area, 
-             area_name, area_description, center_point, alert_type) = alert
-
-            # Parse center point coordinates
+            id_val, event_id, alert_date, created, confidence, area, area_name, area_description, center_point, alert_type, user_id, user_email = alert
+            
+            area_str = f"{float(area):.2f}" if area else "N/A"
+            confidence_val = confidence if confidence else 0
+            
+            # Extract coordinates dari center_point (format: POINT(lng lat))
             center_coords = "N/A"
-            if center_point and "POINT(" in center_point:
+            if center_point and "POINT" in center_point:
                 try:
                     coords = center_point.replace("POINT(", "").replace(")", "").split()
                     if len(coords) == 2:
                         center_coords = f"{float(coords[1]):.4f}, {float(coords[0]):.4f}"
                 except:
                     center_coords = "N/A"
-
-            area_str = f"{float(area):.2f}" if area else "N/A"
-
-            html_content += f"""
-                <tr>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{id_val}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{event_id}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{area_name}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{area_str}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{confidence}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{alert_date}</td>
-                    <td style="border: 1px solid #ddd; padding: 8px;">{center_coords}</td>
-                </tr>
-            """
-
-        html_content += "</table>"
-        return html_content
-
-    def format_combined_email(self, hotspot_alerts: List[Tuple], deforestation_alerts: List[Tuple]) -> str:
-        """Format gabungan email notification untuk kedua jenis alert"""
-        total_alerts = len(hotspot_alerts) + len(deforestation_alerts)
-
-        if total_alerts == 0:
-            return "No new alerts detected."
-
-        # Hitung statistik
-        high_priority_hotspots = len([a for a in hotspot_alerts if a[2] in ["BAHAYA", "WASPADA"]])
-        high_confidence_deforestation = len([a for a in deforestation_alerts if a[4] and a[4] > 80])
-
-        html_content = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: Arial, sans-serif; line-height: 1.6; }}
-                table {{ border-collapse: collapse; width: 100%; margin-bottom: 20px; }}
-                th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
-                th {{ background-color: #f2f2f2; font-weight: bold; }}
-                .header {{ color: #337ab7; }}
-                .summary {{ background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin-bottom: 20px; }}
-                .priority {{ color: #d9534f; font-weight: bold; }}
-                .footer {{ margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; }}
-            </style>
-        </head>
-        <body>
-            <h2 class="header">🚨 Environmental Monitoring Alert System</h2>
             
-            <div class="summary">
-                <h3>Alert Summary</h3>
-                <p><strong>Total New Alerts:</strong> {total_alerts}</p>
-                <p><strong>Hotspot Alerts:</strong> {len(hotspot_alerts)} ({high_priority_hotspots} high priority)</p>
-                <p><strong>Deforestation Alerts:</strong> {len(deforestation_alerts)} ({high_confidence_deforestation} high confidence)</p>
-                <p><strong>Timestamp:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S WIB')}</p>
-                {f'<p class="priority">⚠️ {high_priority_hotspots + high_confidence_deforestation} alerts require immediate attention!</p>' if (high_priority_hotspots + high_confidence_deforestation) > 0 else ''}
+            # Tentukan class CSS berdasarkan confidence
+            row_class = ""
+            if confidence_val >= 5:
+                row_class = "confidence-high"
+            elif confidence_val >= 3:
+                row_class = "confidence-medium"
+            else:
+                row_class = "confidence-low"
+            
+            html_content += f"""
+                        <tr class="{row_class}">
+                            <td>{event_id}</td>
+                            <td>{area_name}</td>
+                            <td>{area_str}</td>
+                            <td>{confidence_val}</td>
+                            <td>{alert_date}</td>
+                            <td>{center_coords}</td>
+                        </tr>
+            """
+        
+        html_content += f"""
+                    </tbody>
+                </table>
+                
+                <div style="margin: 20px 0; padding: 15px; background-color: #f9f9f9; border-radius: 5px;">
+                    <h4>📊 Ringkasan Deforestation:</h4>
+                    <ul>
+                        <li><strong>Total Event:</strong> {len(alerts)}</li>
+                        <li><strong>Total Area Terdeforestasi:</strong> {total_area:.2f} hektar</li>
+                        <li><strong>Confidence Tinggi (≥5):</strong> {high_confidence_count}</li>
+                        <li><strong>Rata-rata Confidence:</strong> {sum([alert[4] for alert in alerts if alert[4]])/len([alert[4] for alert in alerts if alert[4]]):.1f if [alert[4] for alert in alerts if alert[4]] else 0}</li>
+                        <li><strong>Waktu Deteksi:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S WIB')}</li>
+                    </ul>
+                </div>
+                
+                <div style="margin: 20px 0; padding: 15px; background-color: #e8f5e8; border-radius: 5px;">
+                    <h4>🌿 Tindakan yang Disarankan:</h4>
+                    <ul>
+                        <li>Segera cek dashboard untuk analisis detail area terdeforestasi</li>
+                        <li>Koordinasi dengan tim konservasi untuk investigasi lapangan</li>
+                        <li>Dokumentasi dan laporkan ke otoritas terkait</li>
+                        <li>Evaluasi penyebab dan rencana mitigasi</li>
+                        {f'<li style="color: #d32f2f;"><strong>PRIORITY: {high_confidence_count} area dengan confidence tinggi perlu investigasi segera!</strong></li>' if high_confidence_count > 0 else ''}
+                    </ul>
+                </div>
             </div>
-        """
-
-        # Add hotspot alerts section
-        if hotspot_alerts:
-            html_content += self.format_hotspot_alerts_email(hotspot_alerts)
-
-        # Add deforestation alerts section
-        if deforestation_alerts:
-            html_content += self.format_deforestation_alerts_email(deforestation_alerts)
-
-        html_content += """
+            
             <div class="footer">
-                <hr>
-                <p><em>This is an automated notification from Environmental Monitoring System.</em></p>
-                <p>Please check the dashboard for more details and take appropriate action if necessary.</p>
-                <p><strong>Dashboard:</strong> <a href="https://monitoringapp-1075290745302.asia-southeast1.run.app/signin">Monitoring Dashboard</a></p>
-                <p><small>To stop receiving these notifications, please contact your system administrator.</small></p>
+                <p><em>Email ini dikirim secara otomatis oleh Environmental Monitoring System.</em></p>
+                <p><strong>Timestamp:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S WIB')}</p>
             </div>
         </body>
         </html>
         """
-
+        
         return html_content
 
-    def send_email_notification(self, hotspot_alerts: List[Tuple], deforestation_alerts: List[Tuple]):
-        """Mengirim email notification untuk alert baru"""
-        total_alerts = len(hotspot_alerts) + len(deforestation_alerts)
-
-        if total_alerts == 0:
-            return False
-
-        try:
-            if not self.email_config['email_user'] or not self.email_config['to_emails']:
-                logger.warning("Email configuration not complete, skipping notification")
-                return False
-
-            # Setup email
-            msg = MIMEMultipart('alternative')
-
-            # Priority berdasarkan jenis alert
-            priority_count = len([a for a in hotspot_alerts if a[2] in ["BAHAYA", "WASPADA"]]) + \
-                           len([a for a in deforestation_alerts if a[4] and a[4] > 80])
-
-            priority_text = " [HIGH PRIORITY]" if priority_count > 0 else ""
-
-            msg['Subject'] = f"🚨 Environmental Alert{priority_text} - {total_alerts} New Alert(s)"
-            msg['From'] = self.email_config['from_email'] or self.email_config['email_user']
-            msg['To'] = ', '.join(self.email_config['to_emails'])
-
-            # Create HTML content
-            html_content = self.format_combined_email(hotspot_alerts, deforestation_alerts)
-            html_part = MIMEText(html_content, 'html')
-            msg.attach(html_part)
-
-            # Send email
-            server = smtplib.SMTP(self.email_config['smtp_server'], self.email_config['smtp_port'])
-            server.starttls()
-            server.login(self.email_config['email_user'], self.email_config['email_password'])
-
-            for to_email in self.email_config['to_emails']:
-                if to_email.strip():
-                    server.send_message(msg, to_addrs=[to_email.strip()])
-
-            server.quit()
-            logger.info(f"Email notification sent successfully to {len(self.email_config['to_emails'])} recipients")
-            logger.info(f"Alert breakdown - Hotspot: {len(hotspot_alerts)}, Deforestation: {len(deforestation_alerts)}")
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to send email notification: {str(e)}")
-            return False
-
-    def run_monitoring(self, check_interval: int = 300):
-        """Main monitoring loop dengan logika yang diperbaiki + real-time monitoring"""
-        logger.info("Starting Enhanced Environmental Monitoring Notification Service...")
-        logger.info(f"Batch check interval: {check_interval} seconds")
-        logger.info(f"Real-time monitoring: ENABLED (30s interval)")
-        logger.info(f"Email recipients: {len(self.email_config['to_emails'])}")
+    def run_periodic_check(self, check_interval: int = 300):
+        """Jalankan pengecekan berkala untuk semua user"""
+        logger.info(f"Starting periodic check with {check_interval}s interval")
         
-        self.running = True
-        
-        # TAMBAHAN: Start real-time monitoring thread
-        real_time_thread = threading.Thread(target=self.real_time_monitor, args=(30,))
-        real_time_thread.daemon = True
-        real_time_thread.start()
-        logger.info("Real-time monitoring thread started")
-        
-        # TAMBAHAN: Start notification queue processor thread
-        queue_processor_thread = threading.Thread(target=self.process_notification_queue)
-        queue_processor_thread.daemon = True
-        queue_processor_thread.start()
-        logger.info("Notification queue processor thread started")
-
-        consecutive_errors = 0
-        max_consecutive_errors = 5
-
         while True:
             try:
-                # Batch monitoring (fallback untuk memastikan tidak ada yang terlewat)
-                hotspot_alerts = self.check_new_hotspot_alerts()
-                deforestation_alerts = self.check_new_deforestation_alerts()
-
-                total_alerts = len(hotspot_alerts) + len(deforestation_alerts)
-
-                if total_alerts > 0:
-                    # Send batch notification
-                    success = self.send_email_notification(hotspot_alerts, deforestation_alerts)
-
-                    if success:
-                        logger.info(f"Sent batch notification for {total_alerts} alerts (Hotspot: {len(hotspot_alerts)}, Deforestation: {len(deforestation_alerts)})")
+                users = self.get_users_with_aoi()
+                logger.info(f"Checking alerts for {len(users)} users")
+                
+                for user in users:
+                    try:
+                        # Check hotspot alerts untuk user ini
+                        hotspot_alerts = self.check_new_hotspot_alerts_for_user(user)
                         
-                        # Update tracking IDs hanya jika email berhasil dikirim
-                        self.update_last_ids(hotspot_alerts, deforestation_alerts)
-                        consecutive_errors = 0
-                    else:
-                        logger.error("Failed to send batch notification, will retry on next cycle")
-                        consecutive_errors += 1
-                else:
-                    logger.debug("No new alerts detected in batch check")
-                    consecutive_errors = 0
-
-                # Check if too many consecutive errors
-                if consecutive_errors >= max_consecutive_errors:
-                    logger.error(f"Too many consecutive errors ({consecutive_errors}), stopping service")
-                    break
-
-                # Wait before next check
+                        # Check deforestation alerts untuk user ini
+                        deforestation_alerts = self.check_new_deforestation_alerts_for_user(user)
+                        
+                        # Kirim email terpisah untuk hotspot jika ada
+                        if hotspot_alerts:
+                            logger.info(f"Found {len(hotspot_alerts)} new hotspot alerts for user {user.email}")
+                            if self.send_hotspot_email_notification(user, hotspot_alerts):
+                                self.update_user_last_ids(user, hotspot_alerts, [])
+                        
+                        # Kirim email terpisah untuk deforestation jika ada
+                        if deforestation_alerts:
+                            logger.info(f"Found {len(deforestation_alerts)} new deforestation alerts for user {user.email}")
+                            if self.send_deforestation_email_notification(user, deforestation_alerts):
+                                self.update_user_last_ids(user, [], deforestation_alerts)
+                        
+                        if not hotspot_alerts and not deforestation_alerts:
+                            logger.debug(f"No new alerts for user {user.email}")
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing alerts for user {user.email}: {str(e)}")
+                        continue
+                
+                logger.info(f"Completed check cycle, sleeping for {check_interval} seconds")
                 time.sleep(check_interval)
-
-            except KeyboardInterrupt:
-                logger.info("Monitoring service stopped by user")
-                self.running = False
-                break
+                
             except Exception as e:
-                consecutive_errors += 1
-                logger.error(f"Unexpected error in monitoring loop: {str(e)}")
-
-                if consecutive_errors >= max_consecutive_errors:
-                    logger.error(f"Too many consecutive errors ({consecutive_errors}), stopping service")
-                    break
-
+                logger.error(f"Error in periodic check: {str(e)}")
                 time.sleep(check_interval)
 
-        # Cleanup
+    def start_real_time_monitoring(self, check_interval: int = 30):
+        """Start real-time monitoring dengan threading"""
+        self.running = True
+        
+        # Start periodic check thread
+        periodic_thread = threading.Thread(target=self.run_periodic_check, args=(check_interval,))
+        periodic_thread.daemon = True
+        periodic_thread.start()
+        
+        logger.info("Real-time monitoring started")
+        
+        try:
+            # Keep main thread alive
+            while self.running:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            logger.info("Stopping real-time monitoring...")
+            self.running = False
+
+    def stop_monitoring(self):
+        """Stop monitoring service"""
         self.running = False
         if self.connection:
             self.connection.close()
-            logger.info("Database connection closed")
+        logger.info("Monitoring service stopped")
 
 def main():
     """Main function untuk menjalankan service"""
-    # Buat direktori logs jika belum ada
-    os.makedirs('/app/logs', exist_ok=True)
-
-    # Initialize service
+    logger.info("Starting Hotspot Notification Service...")
+    
     service = HotspotNotificationService()
-
-    # Get check interval from environment variable (default 300 seconds = 5 menit)
-    check_interval = int(os.getenv('CHECK_INTERVAL', '300'))
-
-    # Start monitoring
-    service.run_monitoring(check_interval)
+    
+    try:
+        # Start real-time monitoring (default 5 menit interval)
+        service.start_real_time_monitoring(check_interval=300)
+    except KeyboardInterrupt:
+        logger.info("Service interrupted by user")
+    except Exception as e:
+        logger.error(f"Service error: {str(e)}")
+    finally:
+        service.stop_monitoring()
+        logger.info("Service stopped")
 
 if __name__ == "__main__":
     main()
