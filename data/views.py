@@ -10,7 +10,7 @@ from rest_framework.authtoken.models import Token
 from django.db import connection
 from rest_framework import status, permissions
 from django.shortcuts import get_object_or_404
-from .models import HotspotAlert, AreaOfInterest
+from .models import HotspotAlert, AreaOfInterest, DeforestationAlerts
 from .serializer import HotspotAlertSerializer, HotspotAlertGeoSerializer
 from datetime import date, datetime, timedelta
 from dateutil.parser import parse as dateparse
@@ -623,5 +623,236 @@ def hotspot_stats_data(request):
     return Response({
         'total_events': total_events,
         'total_areas': total_areas,
+        'total_companies': total_companies
+    })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def deforestation_chart_data(request):
+    """API untuk ChartDeforestation.tsx - data chart bulanan deforestation"""
+    user = request.user
+    
+    # Ambil parameter tanggal dari request
+    start_date = request.query_params.get('start_date')
+    end_date = request.query_params.get('end_date')
+    
+    # Set default jika tidak ada parameter
+    if not start_date or not end_date:
+        end_date = timezone.now().date()
+        start_date = end_date - timedelta(days=365)
+    else:
+        try:
+            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
+    
+    # Query deforestation alerts per bulan untuk user dengan filter tanggal
+    monthly_data = []
+    current_date = start_date
+    
+    while current_date <= end_date:
+        month_start = current_date.replace(day=1)
+        month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+        
+        if month_end > end_date:
+            month_end = end_date
+        
+        count = DeforestationAlerts.objects.filter(
+            company__users_aoi=user,
+            alert_date__range=[month_start, month_end]
+        ).count()
+        
+        monthly_data.append({
+            'name': month_start.strftime('%b %Y'),
+            'value': count,
+            'amt': count * 100
+        })
+        
+        # Move to next month
+        if month_start.month == 12:
+            current_date = month_start.replace(year=month_start.year + 1, month=1)
+        else:
+            current_date = month_start.replace(month=month_start.month + 1)
+    
+    # Data pie chart berdasarkan confidence level
+    pie_data = []
+    confidence_ranges = [
+        {'name': 'Low (0-2)', 'min': 0, 'max': 2},
+        {'name': 'Medium (3-4)', 'min': 3, 'max': 4},
+        {'name': 'High (5+)', 'min': 5, 'max': 100}
+    ]
+    
+    for range_data in confidence_ranges:
+        count = DeforestationAlerts.objects.filter(
+            company__users_aoi=user,
+            confidence__range=[range_data['min'], range_data['max']],
+            alert_date__range=[start_date, end_date]
+        ).count()
+        
+        pie_data.append({
+            'name': range_data['name'],
+            'value': count
+        })
+    
+    return Response({
+        'monthly_data': monthly_data,
+        'pie_data': pie_data
+    })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def deforestation_company_table_data(request):
+    """API untuk CompanyTable.tsx - data tabel perusahaan dengan detail deforestation"""
+    user = request.user
+    
+    # Ambil parameter tanggal
+    start_date = request.query_params.get('start_date')
+    end_date = request.query_params.get('end_date')
+    
+    if not start_date or not end_date:
+        end_date = timezone.now().date()
+        start_date = end_date - timedelta(days=365)
+    else:
+        try:
+            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
+    
+    # Agregasi jumlah events per AOI/company
+    companies = AreaOfInterest.objects.filter(users_aoi=user)
+    company_data = []
+    
+    for company in companies:
+        # Hitung total events dalam rentang tanggal
+        total_events = DeforestationAlerts.objects.filter(
+            company=company,
+            alert_date__range=[start_date, end_date]
+        ).count()
+        
+        if total_events > 0:  # Hanya tampilkan yang ada events
+            # Hitung total area yang terdeforestasi
+            total_area = DeforestationAlerts.objects.filter(
+                company=company,
+                alert_date__range=[start_date, end_date]
+            ).aggregate(total=Sum('area'))['total'] or 0
+            
+            # Hitung rata-rata confidence
+            avg_confidence = DeforestationAlerts.objects.filter(
+                company=company,
+                alert_date__range=[start_date, end_date]
+            ).aggregate(avg=models.Avg('confidence'))['avg'] or 0
+            
+            company_data.append({
+                'name': company.name,
+                'total_events': total_events,
+                'total_area': float(total_area),
+                'avg_confidence': round(float(avg_confidence), 2)
+            })
+    
+    # Sort by total events
+    company_data.sort(key=lambda x: x['total_events'], reverse=True)
+    
+    return Response(company_data[:10])  # top 10
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def deforestation_event_list_data(request):
+    """API untuk EventList.tsx - daftar deforestation alerts terbaru dengan pagination"""
+    user = request.user
+    
+    # Ambil parameter tanggal dan pagination
+    start_date = request.query_params.get('start_date')
+    end_date = request.query_params.get('end_date')
+    page = int(request.query_params.get('page', 1))
+    page_size = int(request.query_params.get('page_size', 10))
+    
+    if not start_date or not end_date:
+        end_date = timezone.now().date()
+        start_date = end_date - timedelta(days=30)  # Default 30 hari terakhir
+    else:
+        try:
+            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
+    
+    # Query dengan filter tanggal
+    queryset = DeforestationAlerts.objects.filter(
+        company__users_aoi=user,
+        alert_date__range=[start_date, end_date]
+    ).select_related('company').order_by('-alert_date', '-id')
+    
+    # Hitung total dan pagination
+    total_count = queryset.count()
+    start_index = (page - 1) * page_size
+    end_index = start_index + page_size
+    recent_alerts = queryset[start_index:end_index]
+    
+    events_data = []
+    for alert in recent_alerts:
+        events_data.append({
+            'company': alert.company.name,
+            'date': alert.alert_date.strftime('%Y-%m-%d'),
+            'area': f"{alert.area:.2f}" if alert.area else "0.00",
+            'confidence': alert.confidence or 0,
+            'event_id': alert.event_id,
+            'aoi_id': alert.company.id
+        })
+    
+    return Response({
+        'data': events_data,
+        'pagination': {
+            'current_page': page,
+            'page_size': page_size,
+            'total_count': total_count,
+            'total_pages': (total_count + page_size - 1) // page_size,
+            'has_next': end_index < total_count,
+            'has_previous': page > 1
+        }
+    })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def deforestation_stats_data(request):
+    """API untuk DeforestationStats.tsx - statistik deforestation dengan filter tanggal"""
+    user = request.user
+    
+    # Ambil parameter tanggal
+    start_date = request.query_params.get('start_date')
+    end_date = request.query_params.get('end_date')
+    
+    if not start_date or not end_date:
+        end_date = timezone.now().date()
+        start_date = end_date - timedelta(days=365)
+    else:
+        try:
+            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({'error': 'Invalid date format. Use YYYY-MM-DD'}, status=400)
+    
+    # Total kejadian dengan filter tanggal
+    total_events = DeforestationAlerts.objects.filter(
+        company__users_aoi=user,
+        alert_date__range=[start_date, end_date]
+    ).count()
+    
+    # Total area yang terdeforestasi
+    total_area = DeforestationAlerts.objects.filter(
+        company__users_aoi=user,
+        alert_date__range=[start_date, end_date]
+    ).aggregate(total=Sum('area'))['total'] or 0
+    
+    # Total PT/AOI yang terlibat
+    total_companies = AreaOfInterest.objects.filter(
+        users_aoi=user,
+        deforestation_alerts__alert_date__range=[start_date, end_date]
+    ).distinct().count()
+    
+    return Response({
+        'total_events': total_events,
+        'total_area': float(total_area),
         'total_companies': total_companies
     })
