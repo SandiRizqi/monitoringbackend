@@ -1,6 +1,7 @@
 from django.contrib.gis.db import models
 from django.utils import timezone
 import uuid
+from django.conf import settings
 
 class AreaOfInterest(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -146,3 +147,47 @@ class DeforestationAlerts(models.Model):
 
     def __str__(self):
         return f"{self.company} - {self.alert_date} - {self.event_id}"
+    
+
+
+STATUS_CHOICES = [
+        ('valid', 'Valid'),
+        ('invalid', 'Tidak Valid'),
+        ('uncertain', 'Perlu Investigasi'),
+    ]
+
+class HotspotVerification(models.Model):
+    # (Opsional) relasi ke hotspot yang diverifikasi jika ada model Hotspot
+    hotspot = models.ForeignKey(Hotspots, on_delete=models.SET_NULL, null=True, blank=True)
+
+    verifier = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='hotspot_verifications'
+    )
+
+    verification_date = models.DateField()
+    description = models.TextField(blank=True, null=True)
+
+   
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='valid',
+        help_text="Status hasil verifikasi di lapangan"
+    )
+
+    # 🔥 Bukti adanya api atau bekas kebakaran
+    fire_evidence = models.BooleanField(default=False, help_text="Apakah ada bukti kebakaran di lapangan?")
+
+    photo_urls = models.JSONField(
+        default=list,
+        help_text="Daftar URL foto yang diambil saat verifikasi"
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Verification by {self.verifier} on {self.verification_date} - {self.hotspot}"
