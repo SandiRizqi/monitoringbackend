@@ -5,7 +5,8 @@ from .views import (
     UserHotspotAlertTileView, HotspotAlertAPIView,
     hotspot_chart_data, company_table_data, event_list_data, hotspot_stats_data,
     deforestation_chart_data, deforestation_company_table_data, 
-    deforestation_event_list_data, deforestation_stats_data
+    deforestation_event_list_data, deforestation_stats_data,
+    DeforestationVerificationAPIView, HotspotVerificationAPIView
 )
 
 urlpatterns = [
@@ -28,4 +29,10 @@ urlpatterns = [
     path('deforestation-company-table/', deforestation_company_table_data, name='deforestation-company-table'),
     path('deforestation-event-list/', deforestation_event_list_data, name='deforestation-event-list'),
     path('deforestation-stats/', deforestation_stats_data, name='deforestation-stats'),
+
+    path('deforestation-verifications/', DeforestationVerificationAPIView.as_view(), name='deforestation-verification-list'),
+    path('deforestation-verifications/<int:pk>/', DeforestationVerificationAPIView.as_view(), name='deforestation-verification-detail'),
+
+    path('hotspot-verifications/', HotspotVerificationAPIView.as_view(), name='hotspot-verification-list'),
+    path('hotspot-verifications/<int:pk>/', HotspotVerificationAPIView.as_view(), name='hotspot-verification-detail'),
 ]
