@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django import forms
-from .models import AreaOfInterest, Hotspots, DeforestationAlerts, HotspotAlert, HotspotVerification
+from .models import AreaOfInterest, Hotspots, DeforestationAlerts, HotspotAlert, HotspotVerification, DeforestationVerification
 
 class ColorAlphaWidget(forms.TextInput):
     class Media:
@@ -94,6 +94,11 @@ class HotspotVerificationAdmin(admin.ModelAdmin):
     )
 
 
+class DeforestationVerificationAdmin(admin.ModelAdmin):
+    list_display = ('alert', 'verification_date', 'status', 'area_ha', 'verifier')
+    list_filter = ('status', 'verification_date')
+    search_fields = ('alert__event_id', 'description', 'notes')
+
 
 admin.site.register(AreaOfInterest, AreaOfInterestAdmin)
 admin.site.register(Hotspots, HotspotsAdmin)
@@ -102,3 +107,4 @@ admin.site.register(HotspotVerification, HotspotVerificationAdmin)
 
 
 admin.site.register(DeforestationAlerts, DeforestationAlertAdmin)
+admin.site.register(DeforestationVerification, DeforestationVerificationAdmin)

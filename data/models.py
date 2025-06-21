@@ -192,3 +192,46 @@ class HotspotVerification(models.Model):
 
     def __str__(self):
         return f"Verification by {self.verifier} on {self.verification_date} - {self.hotspot}"
+    
+
+
+class DeforestationVerification(models.Model):
+    STATUS_CHOICES = [
+        ('valid', 'Valid'),
+        ('false_alarm', 'False Alarm'),
+        ('investigating', 'Sedang Diselidiki'),
+        ('resolved', 'Selesai'),
+    ]
+
+    alert = models.ForeignKey(
+        DeforestationAlerts,
+        on_delete=models.CASCADE,
+        related_name='deforestation_verifications'
+    )
+    verification_date = models.DateField()
+    status = models.CharField(max_length=50, choices=STATUS_CHOICES, default='valid')
+    area_ha = models.DecimalField(max_digits=10, decimal_places=2)
+    description = models.TextField(blank=True, null=True)
+    notes = models.TextField(blank=True, null=True)
+    photo_urls = models.JSONField(default=list, blank=True)  # menyimpan array URL
+
+    verifier = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='verifier_deforestation_verifications'
+    )
+
+    created = models.DateTimeField(auto_now_add=True)
+    updated = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-verification_date']
+        indexes = [
+            models.Index(fields=['verification_date']),
+            models.Index(fields=['status']),
+        ]
+
+    def __str__(self):
+        return f"Verification of {self.alert_id} on {self.verification_date}"
