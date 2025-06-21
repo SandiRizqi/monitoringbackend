@@ -23,7 +23,6 @@ class CustomUserAdmin(UserAdmin):
 class AccountNotificationSettingAdmin(admin.ModelAdmin):
     list_display = [
         'user',
-        'email_notifications',
         'push_notifications',
         'notify_on_new_hotspot_data',
         'notify_on_new_deforestation_data',
@@ -32,3 +31,8 @@ class AccountNotificationSettingAdmin(admin.ModelAdmin):
 
 admin.site.register(Users, CustomUserAdmin)
 admin.site.register(AccountNotificationSetting, AccountNotificationSettingAdmin)
+
+# Tambahkan ini di bawah import lainnya:
+admin.site.site_header = "Monitoring App Administration"
+admin.site.site_title = "Monitoring App Admin Portal"
+admin.site.index_title = "Selamat Datang di Monitoring App Admin"

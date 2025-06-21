@@ -3,6 +3,7 @@ from django.db import models
 from django.utils import timezone
 from data.models import AreaOfInterest
 from django.db import models
+from django.contrib.postgres.fields import ArrayField
 
 
 
@@ -48,21 +49,30 @@ class Users(AbstractBaseUser, PermissionsMixin):
 class AccountNotificationSetting(models.Model):
     user = models.OneToOneField(Users, on_delete=models.CASCADE, related_name='notification_setting')
 
-    # Jenis pengiriman notifikasi
-    email_notifications = models.BooleanField(default=True)
-    # sms_notifications = models.BooleanField(default=False)
     push_notifications = models.BooleanField(default=True)
-
-    # Preferensi notifikasi konten
-    # notify_on_new_message = models.BooleanField(default=True)
-    # notify_on_system_alert = models.BooleanField(default=True)
-    # notify_on_activity = models.BooleanField(default=False)
-
-    # 🔥 Tambahan untuk monitoring
     notify_on_new_hotspot_data = models.BooleanField(default=True)
     notify_on_new_deforestation_data = models.BooleanField(default=True)
 
+    receivers_emails = ArrayField(
+        models.EmailField(),
+        default=list,
+        blank=True,
+        help_text="Daftar email tambahan yang akan menerima notifikasi"
+    )
+
+    webhook_url = models.URLField(
+        blank=True,
+        null=True,
+        help_text="Opsional: URL untuk mengirim notifikasi via HTTP POST"
+    )
+
     updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        # Set default additional_emails ke [user.email] jika kosong
+        if not self.receivers_emails and self.user and self.user.email:
+            self.receivers_emails = [self.user.email]
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"Notification settings for {self.user.email}"
