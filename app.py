@@ -19,7 +19,7 @@ django.setup()
 
 from django.conf import settings
 from data.models import HotspotAlert, DeforestationAlerts, AreaOfInterest, Hotspots
-from accounts.models import Users
+from accounts.models import Users, AccountNotificationSetting
 
 # Setup logging
 logging.basicConfig(
@@ -63,7 +63,7 @@ class HotspotNotificationService:
         # Initialize tracking untuk setiap user
         self.initialize_user_tracking()
         
-        logger.info("Service initialized with per-user tracking")
+        logger.info("Service initialized with per-user tracking and notification preferences")
 
     def initialize_user_tracking(self):
         """Initialize tracking untuk setiap user berdasarkan AOI mereka"""
@@ -97,13 +97,63 @@ class HotspotNotificationService:
             logger.error(f"Database connection failed: {str(e)}")
             return False
 
-    def get_users_with_aoi(self) -> List[Users]:
-        """Mendapatkan semua user yang memiliki AOI"""
+    def get_users_with_notification_preferences(self) -> List[Users]:
+        """Mendapatkan semua user yang memiliki AOI dan setting notifikasi aktif"""
         try:
-            return Users.objects.filter(areas_of_interest__isnull=False).distinct()
+            return Users.objects.filter(
+                areas_of_interest__isnull=False,
+                notification_setting__email_notifications=True
+            ).distinct()
         except Exception as e:
-            logger.error(f"Error getting users with AOI: {str(e)}")
+            logger.error(f"Error getting users with notification preferences: {str(e)}")
             return []
+
+    def get_user_notification_setting(self, user: Users) -> AccountNotificationSetting:
+        """Mendapatkan atau membuat setting notifikasi untuk user"""
+        try:
+            setting, created = AccountNotificationSetting.objects.get_or_create(
+                user=user,
+                defaults={
+                    'email_notifications': True,
+                    'push_notifications': True,
+                    'notify_on_new_hotspot_data': True,
+                    'notify_on_new_deforestation_data': True,
+                }
+            )
+            if created:
+                logger.info(f"Created default notification settings for user {user.email}")
+            return setting
+        except Exception as e:
+            logger.error(f"Error getting notification setting for user {user.email}: {str(e)}")
+            return None
+
+    def should_send_hotspot_notification(self, user: Users) -> bool:
+        """Cek apakah user ingin menerima notifikasi hotspot"""
+        try:
+            setting = self.get_user_notification_setting(user)
+            if not setting:
+                return False
+            
+            # Cek semua kondisi untuk hotspot notification
+            return (setting.email_notifications and 
+                   setting.notify_on_new_hotspot_data)
+        except Exception as e:
+            logger.error(f"Error checking hotspot notification preference for user {user.email}: {str(e)}")
+            return False
+
+    def should_send_deforestation_notification(self, user: Users) -> bool:
+        """Cek apakah user ingin menerima notifikasi deforestation"""
+        try:
+            setting = self.get_user_notification_setting(user)
+            if not setting:
+                return False
+            
+            # Cek semua kondisi untuk deforestation notification
+            return (setting.email_notifications and 
+                   setting.notify_on_new_deforestation_data)
+        except Exception as e:
+            logger.error(f"Error checking deforestation notification preference for user {user.email}: {str(e)}")
+            return False
 
     def check_new_hotspot_alerts_for_user(self, user: Users) -> List[Tuple]:
         """Mengecek HotspotAlert baru untuk user tertentu berdasarkan AOI mereka"""
@@ -293,7 +343,7 @@ class HotspotNotificationService:
             return False
 
     def format_hotspot_email(self, user: Users, alerts: List[Tuple]) -> str:
-        """Format email khusus untuk hotspot alerts"""
+        """Format email khusus untuk hotspot alerts dengan info preferensi"""
         high_priority_count = len([alert for alert in alerts if alert[2] in ['BAHAYA', 'WASPADA']])
         
         html_content = f"""
@@ -311,6 +361,7 @@ class HotspotNotificationService:
                 .priority-medium {{ background-color: #fff3e0; }}
                 .priority-low {{ background-color: #e8f5e8; }}
                 .footer {{ margin-top: 30px; font-size: 12px; color: #666; }}
+                .preference-info {{ background-color: #e3f2fd; padding: 10px; border-radius: 5px; margin: 10px 0; font-size: 12px; }}
             </style>
         </head>
         <body>
@@ -319,6 +370,11 @@ class HotspotNotificationService:
                 <p>Halo {user.name or user.email},</p>
                 <p><strong>{len(alerts)} titik panas baru</strong> terdeteksi di area yang Anda monitor!</p>
                 {f'<p style="color: #ffff00;"><strong>⚠️ {high_priority_count} alert memerlukan perhatian segera!</strong></p>' if high_priority_count > 0 else ''}
+            </div>
+            
+            <div class="preference-info">
+                <p><strong>ℹ️ Info:</strong> Anda menerima email ini karena preferensi notifikasi hotspot Anda aktif. 
+                Untuk mengubah preferensi, silakan akses pengaturan akun Anda.</p>
             </div>
             
             <div class="content">
@@ -401,7 +457,7 @@ class HotspotNotificationService:
         return html_content
 
     def format_deforestation_email(self, user: Users, alerts: List[Tuple]) -> str:
-        """Format email khusus untuk deforestation alerts"""
+        """Format email khusus untuk deforestation alerts dengan info preferensi"""
         total_area = sum([float(alert[5]) for alert in alerts if alert[5]])
         high_confidence_count = len([alert for alert in alerts if alert[4] and alert[4] >= 5])
         
@@ -420,6 +476,7 @@ class HotspotNotificationService:
                 .confidence-medium {{ background-color: #fff3e0; }}
                 .confidence-low {{ background-color: #e8f5e8; }}
                 .footer {{ margin-top: 30px; font-size: 12px; color: #666; }}
+                .preference-info {{ background-color: #e8f5e8; padding: 10px; border-radius: 5px; margin: 10px 0; font-size: 12px; }}
             </style>
         </head>
         <body>
@@ -429,6 +486,11 @@ class HotspotNotificationService:
                 <p><strong>{len(alerts)} deforestasi baru</strong> terdeteksi di area yang Anda monitor!</p>
                 <p><strong>Total Area Terdeforestasi: {total_area:.2f} hektar</strong></p>
                 {f'<p style="color: #ffff00;"><strong>⚠️ {high_confidence_count} alert dengan confidence tinggi!</strong></p>' if high_confidence_count > 0 else ''}
+            </div>
+            
+            <div class="preference-info">
+                <p><strong>ℹ️ Info:</strong> Anda menerima email ini karena preferensi notifikasi deforestation Anda aktif. 
+                Untuk mengubah preferensi, silakan akses pengaturan akun Anda.</p>
             </div>
             
             <div class="content">
@@ -521,36 +583,45 @@ class HotspotNotificationService:
         return html_content
 
     def run_periodic_check(self, check_interval: int = 300):
-        """Jalankan pengecekan berkala untuk semua user"""
+        """Jalankan pengecekan berkala untuk semua user dengan memperhatikan preferensi notifikasi"""
         logger.info(f"Starting periodic check with {check_interval}s interval")
         
         while True:
             try:
-                users = self.get_users_with_aoi()
-                logger.info(f"Checking alerts for {len(users)} users")
+                users = self.get_users_with_notification_preferences()
+                logger.info(f"Checking alerts for {len(users)} users with notification preferences enabled")
                 
                 for user in users:
                     try:
-                        # Check hotspot alerts untuk user ini
-                        hotspot_alerts = self.check_new_hotspot_alerts_for_user(user)
+                        # Check preferensi notifikasi user
+                        should_check_hotspot = self.should_send_hotspot_notification(user)
+                        should_check_deforestation = self.should_send_deforestation_notification(user)
                         
-                        # Check deforestation alerts untuk user ini
-                        deforestation_alerts = self.check_new_deforestation_alerts_for_user(user)
+                        logger.debug(f"User {user.email} - Hotspot notifications: {should_check_hotspot}, Deforestation notifications: {should_check_deforestation}")
                         
-                        # Kirim email terpisah untuk hotspot jika ada
-                        if hotspot_alerts:
-                            logger.info(f"Found {len(hotspot_alerts)} new hotspot alerts for user {user.email}")
-                            if self.send_hotspot_email_notification(user, hotspot_alerts):
-                                self.update_user_last_ids(user, hotspot_alerts, [])
+                        # Check hotspot alerts hanya jika user ingin menerima notifikasi hotspot
+                        if should_check_hotspot:
+                            hotspot_alerts = self.check_new_hotspot_alerts_for_user(user)
+                            if hotspot_alerts:
+                                logger.info(f"Found {len(hotspot_alerts)} new hotspot alerts for user {user.email}")
+                                if self.send_hotspot_email_notification(user, hotspot_alerts):
+                                    self.update_user_last_ids(user, hotspot_alerts, [])
+                        else:
+                            logger.debug(f"Skipping hotspot check for user {user.email} - notifications disabled")
                         
-                        # Kirim email terpisah untuk deforestation jika ada
-                        if deforestation_alerts:
-                            logger.info(f"Found {len(deforestation_alerts)} new deforestation alerts for user {user.email}")
-                            if self.send_deforestation_email_notification(user, deforestation_alerts):
-                                self.update_user_last_ids(user, [], deforestation_alerts)
+                        # Check deforestation alerts hanya jika user ingin menerima notifikasi deforestation
+                        if should_check_deforestation:
+                            deforestation_alerts = self.check_new_deforestation_alerts_for_user(user)
+                            if deforestation_alerts:
+                                logger.info(f"Found {len(deforestation_alerts)} new deforestation alerts for user {user.email}")
+                                if self.send_deforestation_email_notification(user, deforestation_alerts):
+                                    self.update_user_last_ids(user, [], deforestation_alerts)
+                        else:
+                            logger.debug(f"Skipping deforestation check for user {user.email} - notifications disabled")
                         
-                        if not hotspot_alerts and not deforestation_alerts:
-                            logger.debug(f"No new alerts for user {user.email}")
+                        # Log jika tidak ada alert baru
+                        if not should_check_hotspot and not should_check_deforestation:
+                            logger.debug(f"All notifications disabled for user {user.email}")
                             
                     except Exception as e:
                         logger.error(f"Error processing alerts for user {user.email}: {str(e)}")
@@ -572,7 +643,7 @@ class HotspotNotificationService:
         periodic_thread.daemon = True
         periodic_thread.start()
         
-        logger.info("Real-time monitoring started")
+        logger.info("Real-time monitoring started with notification preferences support")
         
         try:
             # Keep main thread alive
@@ -591,7 +662,7 @@ class HotspotNotificationService:
 
 def main():
     """Main function untuk menjalankan service"""
-    logger.info("Starting Hotspot Notification Service...")
+    logger.info("Starting Hotspot Notification Service with User Preferences...")
     
     service = HotspotNotificationService()
     

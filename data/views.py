@@ -1,3 +1,4 @@
+#data/views.py
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -17,7 +18,7 @@ from dateutil.parser import parse as dateparse
 import json
 import logging
 logger = logging.getLogger(__name__)
-from django.db.models import Count, Q, Sum
+from django.db.models import Count, Q, Sum, Avg
 from django.utils import timezone
 
 
@@ -744,7 +745,7 @@ def deforestation_company_table_data(request):
             avg_confidence = DeforestationAlerts.objects.filter(
                 company=company,
                 alert_date__range=[start_date, end_date]
-            ).aggregate(avg=models.Avg('confidence'))['avg'] or 0
+            ).aggregate(avg=Avg('confidence'))['avg'] or 0
             
             company_data.append({
                 'name': company.name,

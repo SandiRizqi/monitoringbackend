@@ -1,4 +1,4 @@
-# urls.py
+# accounts/urls.py
 from django.urls import path
 from .views import login_view, user_info_view, save_google_user
 
