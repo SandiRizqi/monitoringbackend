@@ -11,8 +11,8 @@ from rest_framework.authtoken.models import Token
 from django.db import connection
 from rest_framework import status, permissions
 from django.shortcuts import get_object_or_404
-from .models import HotspotAlert, AreaOfInterest, DeforestationAlerts
-from .serializer import HotspotAlertSerializer, HotspotAlertGeoSerializer
+from .models import HotspotAlert, AreaOfInterest, DeforestationAlerts, DeforestationVerification
+from .serializer import HotspotAlertSerializer, HotspotAlertGeoSerializer, DeforestationVerificationSerializer, DeforestationVerificationListSerializer
 from datetime import date, datetime, timedelta
 from dateutil.parser import parse as dateparse
 import json
@@ -20,7 +20,9 @@ import logging
 logger = logging.getLogger(__name__)
 from django.db.models import Count, Q, Sum, Avg
 from django.utils import timezone
-
+from django.shortcuts import get_object_or_404
+from .models import HotspotVerification, Hotspots
+from .serializer import HotspotVerificationSerializer, HotspotVerificationListSerializer
 
 
 class UserAOIListView(APIView):
@@ -859,3 +861,244 @@ def deforestation_stats_data(request):
         'total_area': float(total_area),
         'total_companies': total_companies
     })
+
+
+class DeforestationVerificationAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request, pk=None):
+        user = request.user
+        
+        if pk:
+            # Detail view - ambil satu verifikasi
+            verification = get_object_or_404(
+                DeforestationVerification.objects.select_related('alert', 'alert__company', 'verifier'),
+                pk=pk,
+                alert__company__users_aoi=user
+            )
+            serializer = DeforestationVerificationSerializer(verification)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        # List view - ambil semua verifikasi user
+        queryset = DeforestationVerification.objects.filter(
+            alert__company__users_aoi=user
+        ).select_related('alert', 'alert__company', 'verifier').order_by('-verification_date')
+        
+        serializer = DeforestationVerificationListSerializer(queryset, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+    
+    def post(self, request):
+        user = request.user
+        data = request.data.copy()
+        
+        # Validasi bahwa alert_id ada dan user memiliki akses
+        alert_id = data.get('alert')
+        if not alert_id:
+            return Response(
+                {'detail': 'Alert ID is required'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            alert = DeforestationAlerts.objects.get(
+                id=alert_id,
+                company__users_aoi=user
+            )
+        except DeforestationAlerts.DoesNotExist:
+            return Response(
+                {'detail': 'Deforestation alert not found or access denied'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Cek apakah sudah ada verifikasi untuk alert ini
+        existing_verification = DeforestationVerification.objects.filter(alert=alert).first()
+        if existing_verification:
+            return Response(
+                {'detail': 'Verification already exists for this alert'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = DeforestationVerificationSerializer(
+            data=data, 
+            context={'request': request}
+        )
+        
+        if serializer.is_valid():
+            verification = serializer.save()
+            return Response(
+                DeforestationVerificationSerializer(verification).data, 
+                status=status.HTTP_201_CREATED
+            )
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def put(self, request, pk):
+        user = request.user
+        
+        try:
+            verification = DeforestationVerification.objects.get(
+                pk=pk,
+                alert__company__users_aoi=user
+            )
+        except DeforestationVerification.DoesNotExist:
+            return Response(
+                {'detail': 'Verification not found or access denied'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = DeforestationVerificationSerializer(
+            verification, 
+            data=request.data, 
+            context={'request': request},
+            partial=True
+        )
+        
+        if serializer.is_valid():
+            verification = serializer.save()
+            return Response(
+                DeforestationVerificationSerializer(verification).data,
+                status=status.HTTP_200_OK
+            )
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    def delete(self, request, pk):
+        user = request.user
+        
+        try:
+            verification = DeforestationVerification.objects.get(
+                pk=pk,
+                alert__company__users_aoi=user
+            )
+        except DeforestationVerification.DoesNotExist:
+            return Response(
+                {'detail': 'Verification not found or access denied'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        verification.delete()
+        return Response(
+            {'detail': 'Verification deleted successfully'}, 
+            status=status.HTTP_200_OK
+        )
+
+
+class HotspotVerificationAPIView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request, pk=None):
+        user = request.user
+        
+        if pk:
+            # Detail view - ambil satu verifikasi
+            verification = get_object_or_404(
+                HotspotVerification.objects.select_related('hotspot', 'verifier'),
+                pk=pk,
+                verifier=user
+            )
+            serializer = HotspotVerificationSerializer(verification)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        
+        # List view - ambil semua verifikasi user
+        queryset = HotspotVerification.objects.filter(
+            verifier=user
+        ).select_related('hotspot', 'verifier').order_by('-verification_date')
+        
+        serializer = HotspotVerificationListSerializer(queryset, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        user = request.user
+        data = request.data.copy()
+        
+        # Validasi bahwa hotspot_id ada
+        hotspot_id = data.get('hotspot')
+        if not hotspot_id:
+            return Response(
+                {'detail': 'Hotspot ID is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            hotspot = Hotspots.objects.get(id=hotspot_id)
+        except Hotspots.DoesNotExist:
+            return Response(
+                {'detail': 'Hotspot not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Cek apakah sudah ada verifikasi untuk hotspot ini oleh user yang sama
+        existing_verification = HotspotVerification.objects.filter(
+            hotspot=hotspot, 
+            verifier=user
+        ).first()
+        
+        if existing_verification:
+            return Response(
+                {'detail': 'Verification already exists for this hotspot by this user'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        serializer = HotspotVerificationSerializer(
+            data=data,
+            context={'request': request}
+        )
+        
+        if serializer.is_valid():
+            verification = serializer.save()
+            return Response(
+                HotspotVerificationSerializer(verification).data,
+                status=status.HTTP_201_CREATED
+            )
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request, pk):
+        user = request.user
+        
+        try:
+            verification = HotspotVerification.objects.get(
+                pk=pk,
+                verifier=user
+            )
+        except HotspotVerification.DoesNotExist:
+            return Response(
+                {'detail': 'Verification not found or access denied'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        serializer = HotspotVerificationSerializer(
+            verification,
+            data=request.data,
+            context={'request': request},
+            partial=True
+        )
+        
+        if serializer.is_valid():
+            verification = serializer.save()
+            return Response(
+                HotspotVerificationSerializer(verification).data,
+                status=status.HTTP_200_OK
+            )
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request, pk):
+        user = request.user
+        
+        try:
+            verification = HotspotVerification.objects.get(
+                pk=pk,
+                verifier=user
+            )
+        except HotspotVerification.DoesNotExist:
+            return Response(
+                {'detail': 'Verification not found or access denied'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        verification.delete()
+        return Response(
+            {'detail': 'Verification deleted successfully'},
+            status=status.HTTP_200_OK
+        )
