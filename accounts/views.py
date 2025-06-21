@@ -4,11 +4,14 @@ from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from django.contrib.auth import authenticate
-from .models import Users
+from .models import Users, AccountNotificationSetting
+from .serializers import AccountNotificationSettingSerializer
 from rest_framework import status
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.authtoken.models import Token
+from rest_framework.views import APIView
+from rest_framework.authentication import TokenAuthentication
 
 
 @api_view(['POST'])
@@ -68,3 +71,31 @@ def user_info_view(request):
         'token': request.auth.key if request.auth else None,
         'scope': [aoi.id for aoi in user.areas_of_interest.all()]
     })
+
+
+
+
+class AccountNotificationSettingView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            setting, _ = AccountNotificationSetting.objects.get_or_create(user=request.user)
+            serializer = AccountNotificationSettingSerializer(setting)
+            return Response(serializer.data)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def put(self, request):
+        try:
+            setting, _ = AccountNotificationSetting.objects.get_or_create(user=request.user)
+            serializer = AccountNotificationSettingSerializer(setting, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save(user=request.user)
+                return Response(serializer.data)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    
