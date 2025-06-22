@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from rest_framework_gis.serializers import GeoFeatureModelSerializer
-from .models import AreaOfInterest, HotspotAlert
+from .models import AreaOfInterest, HotspotAlert, DeforestationAlerts
 
 class AreaOfInterestSerializer(serializers.ModelSerializer):
     geometry_type = serializers.SerializerMethodField()
@@ -52,3 +52,10 @@ class HotspotAlertGeoSerializer(serializers.ModelSerializer):
 
     def get_hotspot_geom(self, obj):
         return obj.hotspot.geom.geojson if obj.hotspot and obj.hotspot.geom else None
+
+
+class DeforestationAlertsSerializer(GeoFeatureModelSerializer):
+    class Meta:
+        model = DeforestationAlerts
+        geo_field = 'geom'
+        fields = '__all__'

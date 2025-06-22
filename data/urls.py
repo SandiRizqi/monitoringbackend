@@ -2,7 +2,7 @@
 from django.urls import path
 from .views import (
     UserAOIListView, UserAreaOfInterestTileView, UserDeforestationTileView, 
-    UserHotspotAlertTileView, HotspotAlertAPIView,
+    UserHotspotAlertTileView, HotspotAlertAPIView, DeforestationAlertDetailView,
     hotspot_chart_data, company_table_data, event_list_data, hotspot_stats_data,
     deforestation_chart_data, deforestation_company_table_data, 
     deforestation_event_list_data, deforestation_stats_data
@@ -12,6 +12,8 @@ urlpatterns = [
     path('user-aois/', UserAOIListView.as_view(), name='user-aois'),
     path('hotspot-alerts/', HotspotAlertAPIView.as_view(), name='hotspotalert-list'),
     path('hotspot-alerts/<int:pk>/', HotspotAlertAPIView.as_view(), name='hotspotalert-detail'),
+
+     path('deforestation-alerts/<str:id>/', DeforestationAlertDetailView.as_view(), name='deforestation-alert-detail'),
     
     # Tiles
     path('tiles/user-aois/<int:z>/<int:x>/<int:y>/', UserAreaOfInterestTileView.as_view(), name='user-aois-tile'),

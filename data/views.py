@@ -12,7 +12,7 @@ from django.db import connection
 from rest_framework import status, permissions
 from django.shortcuts import get_object_or_404
 from .models import HotspotAlert, AreaOfInterest, DeforestationAlerts
-from .serializer import HotspotAlertSerializer, HotspotAlertGeoSerializer
+from .serializer import HotspotAlertSerializer, HotspotAlertGeoSerializer, DeforestationAlertsSerializer
 from datetime import date, datetime, timedelta
 from dateutil.parser import parse as dateparse
 import json
@@ -20,6 +20,7 @@ import logging
 logger = logging.getLogger(__name__)
 from django.db.models import Count, Q, Sum, Avg
 from django.utils import timezone
+from rest_framework import generics
 
 
 
@@ -859,3 +860,10 @@ def deforestation_stats_data(request):
         'total_area': float(total_area),
         'total_companies': total_companies
     })
+
+
+
+class DeforestationAlertDetailView(generics.RetrieveAPIView):
+    queryset = DeforestationAlerts.objects.all()
+    serializer_class = DeforestationAlertsSerializer
+    lookup_field = 'id'
