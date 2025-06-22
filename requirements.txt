@@ -8,3 +8,4 @@ djangorestframework
 djangorestframework-gis
 gunicorn
 python-dateutil
+requests

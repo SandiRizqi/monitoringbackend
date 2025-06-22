@@ -12,6 +12,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.authtoken.models import Token
 from rest_framework.views import APIView
 from rest_framework.authentication import TokenAuthentication
+from notifications.services import NotificationService
+
 
 
 @api_view(['POST'])
@@ -98,4 +100,64 @@ class AccountNotificationSettingView(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-    
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def send_test_notification(request):
+    """Endpoint untuk mengirim test notification"""
+    try:
+        user = request.user
+        notification_type = request.data.get('type', 'hotspot')
+        
+        if notification_type not in ['hotspot', 'deforestation']:
+            return Response(
+                {'error': 'Invalid notification type. Use "hotspot" or "deforestation"'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        success = NotificationService.send_test_notification(user, notification_type)
+        
+        if success:
+            return Response({'message': f'Test {notification_type} notification sent successfully'})
+        else:
+            return Response(
+                {'error': 'Failed to send test notification'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+            
+    except Exception as e:
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+@api_view(['POST'])
+@permission_classes([AllowAny])  # Untuk webhook dari sistem eksternal
+def webhook_notification_receiver(request):
+    """Endpoint untuk menerima notifikasi dari sistem eksternal"""
+    try:
+        # Validasi API key atau token jika diperlukan
+        api_key = request.headers.get('X-API-Key')
+        if api_key != 'your-secret-api-key':  # Ganti dengan API key yang aman
+            return Response(
+                {'error': 'Invalid API key'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        data = request.data
+        notification_type = data.get('type')
+        
+        # Log incoming webhook
+        logger.info(f"Received webhook notification: {notification_type}")
+        
+        # Process webhook data sesuai kebutuhan
+        # Misalnya: update database, trigger notifikasi, dll.
+        
+        return Response({'message': 'Webhook received successfully'})
+        
+    except Exception as e:
+        logger.error(f"Error processing webhook: {str(e)}")
+        return Response(
+            {'error': str(e)},
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )

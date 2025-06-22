@@ -1,0 +1,19 @@
+🔥 HOTSPOT ALERT
+
+Hello {{ user.name|default:user.email }},
+
+A new hotspot has been detected in your area of interest:
+
+Area: {{ aoi_name }}
+Alert Date: {{ alert_date }}
+Category: {{ category }}
+Confidence: {{ confidence|default:"N/A" }}
+Distance: {{ distance|floatformat:2 }} meters
+{% if hotspot_location %}Location: {{ hotspot_location.lat }}, {{ hotspot_location.lng }}{% endif %}
+
+Please check your monitoring dashboard for more details.
+
+Dashboard: https://monitoring.geo-circle.com/dashboard/hotspot
+
+---
+This is an automated notification from Forest Monitoring System

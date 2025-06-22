@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Hotspot Alert</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #ff6b35; color: white; padding: 20px; text-align: center; }
+        .content { padding: 20px; background: #f9f9f9; }
+        .alert-info { background: white; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .footer { text-align: center; padding: 20px; color: #666; }
+        .btn { background: #ff6b35; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔥 Hotspot Alert</h1>
+        </div>
+        
+        <div class="content">
+            <p>Hello {{ user.name|default:user.email }},</p>
+            
+            <p>A new hotspot has been detected in your area of interest:</p>
+            
+            <div class="alert-info">
+                <h3>{{ aoi_name }}</h3>
+                <p><strong>Alert Date:</strong> {{ alert_date }}</p>
+                <p><strong>Category:</strong> {{ category }}</p>
+                <p><strong>Confidence:</strong> {{ confidence|default:"N/A" }}</p>
+                <p><strong>Distance:</strong> {{ distance|floatformat:2 }} meters</p>
+                {% if hotspot_location %}
+                <p><strong>Location:</strong> {{ hotspot_location.lat }}, {{ hotspot_location.lng }}</p>
+                {% endif %}
+            </div>
+            
+            <p>Please check your monitoring dashboard for more details.</p>
+            
+            <p style="text-align: center;">
+                <a href="https://monitoring.geo-circle.com/dashboard/hotspot" class="btn">View Dashboard</a>
+            </p>
+        </div>
+        
+        <div class="footer">
+            <p>This is an automated notification from Forest Monitoring System</p>
+        </div>
+    </div>
+</body>
+</html>
