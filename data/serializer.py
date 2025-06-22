@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from rest_framework_gis.serializers import GeoFeatureModelSerializer
 from .models import AreaOfInterest, HotspotAlert, DeforestationAlerts
+from .models import DeforestationVerification, DeforestationAlerts
+from .models import AreaOfInterest, HotspotAlert, HotspotVerification
 
 class AreaOfInterestSerializer(serializers.ModelSerializer):
     geometry_type = serializers.SerializerMethodField()
@@ -59,3 +61,69 @@ class DeforestationAlertsSerializer(GeoFeatureModelSerializer):
         model = DeforestationAlerts
         geo_field = 'geom'
         fields = '__all__'
+    
+
+class DeforestationVerificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DeforestationVerification
+        fields = [
+            'id', 'alert', 'verification_date', 'status', 'area_ha', 
+            'description', 'notes', 'photo_urls', 'verifier', 'created', 'updated'
+        ]
+        read_only_fields = ['id', 'verifier', 'created', 'updated']
+    
+    def create(self, validated_data):
+        # Set verifier dari request user
+        validated_data['verifier'] = self.context['request'].user
+        return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        # Update verifier jika diperlukan
+        validated_data['verifier'] = self.context['request'].user
+        return super().update(instance, validated_data)
+
+class DeforestationVerificationListSerializer(serializers.ModelSerializer):
+    alert_event_id = serializers.CharField(source='alert.event_id', read_only=True)
+    alert_date = serializers.DateField(source='alert.alert_date', read_only=True)
+    company_name = serializers.CharField(source='alert.company.name', read_only=True)
+    verifier_name = serializers.CharField(source='verifier.username', read_only=True)
+    
+    class Meta:
+        model = DeforestationVerification
+        fields = [
+            'id', 'verification_date', 'status', 'area_ha', 'description', 
+            'notes', 'alert_event_id', 'alert_date', 'company_name', 'verifier_name'
+        ]
+
+
+class HotspotVerificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HotspotVerification
+        fields = [
+            'id', 'hotspot', 'verification_date', 'description', 'status',
+            'fire_evidence', 'photo_urls', 'verifier', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'verifier', 'created_at', 'updated_at']
+
+    def create(self, validated_data):
+        # Set verifier dari request user
+        validated_data['verifier'] = self.context['request'].user
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        # Update verifier jika diperlukan
+        validated_data['verifier'] = self.context['request'].user
+        return super().update(instance, validated_data)
+
+class HotspotVerificationListSerializer(serializers.ModelSerializer):
+    hotspot_id = serializers.CharField(source='hotspot.id', read_only=True)
+    hotspot_date = serializers.DateField(source='hotspot.date', read_only=True)
+    hotspot_confidence = serializers.IntegerField(source='hotspot.conf', read_only=True)
+    verifier_name = serializers.CharField(source='verifier.username', read_only=True)
+
+    class Meta:
+        model = HotspotVerification
+        fields = [
+            'id', 'verification_date', 'status', 'fire_evidence', 'description',
+            'hotspot_id', 'hotspot_date', 'hotspot_confidence', 'verifier_name'
+        ]
