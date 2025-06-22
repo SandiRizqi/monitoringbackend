@@ -11,6 +11,8 @@ from rest_framework.authtoken.models import Token
 from django.db import connection
 from rest_framework import status, permissions
 from django.shortcuts import get_object_or_404
+from .models import HotspotAlert, AreaOfInterest, DeforestationAlerts
+from .serializer import HotspotAlertSerializer, HotspotAlertGeoSerializer, DeforestationAlertsSerializer
 from .models import HotspotAlert, AreaOfInterest, DeforestationAlerts, DeforestationVerification
 from .serializer import HotspotAlertSerializer, HotspotAlertGeoSerializer, DeforestationVerificationSerializer, DeforestationVerificationListSerializer
 from datetime import date, datetime, timedelta
@@ -20,6 +22,8 @@ import logging
 logger = logging.getLogger(__name__)
 from django.db.models import Count, Q, Sum, Avg
 from django.utils import timezone
+from rest_framework import generics
+
 from django.shortcuts import get_object_or_404
 from .models import HotspotVerification, Hotspots
 from .serializer import HotspotVerificationSerializer, HotspotVerificationListSerializer
@@ -863,6 +867,13 @@ def deforestation_stats_data(request):
     })
 
 
+
+class DeforestationAlertDetailView(generics.RetrieveAPIView):
+    queryset = DeforestationAlerts.objects.all()
+    serializer_class = DeforestationAlertsSerializer
+    lookup_field = 'id'
+
+    
 class DeforestationVerificationAPIView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     
