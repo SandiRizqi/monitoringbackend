@@ -4,6 +4,9 @@ from rest_framework_gis.serializers import GeoFeatureModelSerializer
 from .models import AreaOfInterest, HotspotAlert, DeforestationAlerts
 from .models import DeforestationVerification, DeforestationAlerts
 from .models import AreaOfInterest, HotspotAlert, HotspotVerification
+from django.contrib.gis.geos import GEOSGeometry
+from django.contrib.gis.measure import Area
+
 
 class AreaOfInterestSerializer(serializers.ModelSerializer):
     geometry_type = serializers.SerializerMethodField()
@@ -11,7 +14,7 @@ class AreaOfInterestSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = AreaOfInterest
-        geo_field = "geometry"  # penting!
+        geo_field = "geometry"
         fields = '__all__'
 
     def get_geometry_type(self, obj):
@@ -20,9 +23,33 @@ class AreaOfInterestSerializer(serializers.ModelSerializer):
     def get_geometry(self, obj):
         request = self.context.get('request')
         if request and request.query_params.get('geom') == 'true':
-            return obj.geometry.geojson  # pastikan ini GeoDjango GEOSGeometry
+            return obj.geometry.geojson
         return None
-    
+
+    def validate_geometry(self, value):
+        """Validasi maksimum luas AOI"""
+        if value:
+            if isinstance(value, dict):
+                geom = GEOSGeometry(str(value))
+            else:
+                geom = value
+            
+            geom_transformed = geom.transform(3857, clone=True) 
+
+            area_sqm = geom_transformed.area
+            
+            area_hectares = area_sqm / 10000
+            
+            MAX_AREA_HECTARES = 10000  # 10,000 hektar
+            
+            if area_hectares > MAX_AREA_HECTARES:
+                raise serializers.ValidationError(
+                    f"Area of Interest too large. Maximum allowed area is {MAX_AREA_HECTARES:,.0f} hectares, "
+                    f"but the uploaded area is {area_hectares:,.2f} hectares."
+                )
+        
+        return value
+
     def to_representation(self, instance):
         rep = super().to_representation(instance)
         request = self.context.get('request')
@@ -35,8 +62,32 @@ class AreaOfInterestSerializer(serializers.ModelSerializer):
 class AreaOfInterestGeoSerializer(GeoFeatureModelSerializer):
     class Meta:
         model = AreaOfInterest
-        geo_field = "geometry"   # nama field geometry di model kamu
+        geo_field = "geometry"
         fields = '__all__'
+
+    def validate_geometry(self, value):
+        """Validasi maksimum luas AOI untuk GeoSerializer"""
+        if value:
+            if isinstance(value, dict):
+                geom = GEOSGeometry(str(value))
+            else:
+                geom = value
+            
+            geom_transformed = geom.transform(3857, clone=True)
+            
+            area_sqm = geom_transformed.area
+            
+            area_hectares = area_sqm / 10000
+            
+            MAX_AREA_HECTARES = 10000 
+            
+            if area_hectares > MAX_AREA_HECTARES:
+                raise serializers.ValidationError(
+                    f"Area of Interest too large. Maximum allowed area is {MAX_AREA_HECTARES:,.0f} hectares, "
+                    f"but the uploaded area is {area_hectares:,.2f} hectares."
+                )
+        
+        return value
 
 
 

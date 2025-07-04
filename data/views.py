@@ -75,17 +75,15 @@ class UserAOIListView(APIView):
         user = request.user
         data = request.data
         aoi_id = data.get('id', None)
-        # print(data)
 
         if aoi_id:
             try:
                 aoi = AreaOfInterest.objects.get(id=aoi_id)
             except AreaOfInterest.DoesNotExist:
-                # Jika id dikirim tapi tidak ada di DB, anggap create baru
                 aoi = None
 
             if aoi:
-                # Cek apakah user punya akses ke AOI ini dan permission change
+                # Update existing AOI
                 if not user.has_perm('data.change_areaofinterest') or user not in aoi.users_aoi.all():
                     return Response({'detail': 'You do not have permission to change this Area of Interest.'}, status=status.HTTP_403_FORBIDDEN)
 
@@ -93,31 +91,67 @@ class UserAOIListView(APIView):
                 if serializer.is_valid():
                     serializer.save()
                     return Response(serializer.data)
-                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                else:
+                    # Tangani error validasi area
+                    error_messages = []
+                    for field, errors in serializer.errors.items():
+                        if field == 'geometry':
+                            error_messages.extend(errors)
+                        else:
+                            error_messages.append(f"{field}: {', '.join(errors)}")
+                    
+                    return Response({
+                        'detail': error_messages[0] if error_messages else 'Validation error',
+                        'errors': serializer.errors
+                    }, status=status.HTTP_400_BAD_REQUEST)
             else:
-                # AOI tidak ada, lanjut ke create baru
+                # Create new AOI
                 if not user.has_perm('data.add_areaofinterest'):
                     return Response({'detail': 'You do not have permission to add Area of Interest.'}, status=status.HTTP_403_FORBIDDEN)
-                
+
                 serializer = AreaOfInterestGeoSerializer(data=data, context={'request': request})
                 if serializer.is_valid():
                     new_aoi = serializer.save()
                     new_aoi.users_aoi.add(user)
                     new_aoi.save()
                     return Response(serializer.data, status=status.HTTP_201_CREATED)
-                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                else:
+                    # Tangani error validasi area
+                    error_messages = []
+                    for field, errors in serializer.errors.items():
+                        if field == 'geometry':
+                            error_messages.extend(errors)
+                        else:
+                            error_messages.append(f"{field}: {', '.join(errors)}")
+                    
+                    return Response({
+                        'detail': error_messages[0] if error_messages else 'Validation error',
+                        'errors': serializer.errors
+                    }, status=status.HTTP_400_BAD_REQUEST)
         else:
-            # Tidak ada id, buat baru
+            # Create new AOI
             if not user.has_perm('data.add_areaofinterest'):
                 return Response({'detail': 'You do not have permission to add Area of Interest.'}, status=status.HTTP_403_FORBIDDEN)
-            
+
             serializer = AreaOfInterestGeoSerializer(data=data, context={'request': request})
             if serializer.is_valid():
                 new_aoi = serializer.save()
                 new_aoi.users_aoi.add(user)
                 new_aoi.save()
                 return Response(serializer.data, status=status.HTTP_201_CREATED)
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                # Tangani error validasi area
+                error_messages = []
+                for field, errors in serializer.errors.items():
+                    if field == 'geometry':
+                        error_messages.extend(errors)
+                    else:
+                        error_messages.append(f"{field}: {', '.join(errors)}")
+                
+                return Response({
+                    'detail': error_messages[0] if error_messages else 'Validation error',
+                    'errors': serializer.errors
+                }, status=status.HTTP_400_BAD_REQUEST)
         
     def delete(self, request):
         try:
