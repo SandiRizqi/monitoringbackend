@@ -1147,3 +1147,4 @@ class HotspotVerificationAPIView(APIView):
             {'detail': 'Verification deleted successfully'},
             status=status.HTTP_200_OK
         )
+
